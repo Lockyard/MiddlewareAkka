@@ -1,8 +1,8 @@
-package it.polimi.middleware.actors;
+package it.polimi.middleware.server.actors;
 
 import akka.actor.AbstractActor;
 
-public class ClientActor extends AbstractActor {
+public class KeySpaceWorker extends AbstractActor {
     @Override
     public Receive createReceive() {
         return null;
