@@ -21,6 +21,7 @@ repositories {
 
 dependencies {
 
+
     testCompile group: 'junit', name: 'junit', version: '4.12'
     compile 'org.scala-lang:scala-library:2.10.4'
 
@@ -28,6 +29,7 @@ dependencies {
     compile 'ch.qos.logback:logback-classic:1.2.3'
     testCompile 'com.typesafe.akka:akka-actor-testkit-typed_2.13:2.6.4'
     testCompile 'junit:junit:4.12'
+    compile group: 'com.typesafe.akka', name: 'akka-serialization-jackson_2.13', version: '2.6.4'
 }
 
 run {
