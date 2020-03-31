@@ -30,7 +30,7 @@ public class StoreManager extends AbstractActor {
     }
 
     private void tmpResponse(GetMsg msg) {
-        sender().tell(new ReplyGetMsg("Received msg with id: " + msg.getKey()), self());
+        sender().tell(new ReplyGetMsg("Received get msg with id: " + msg.getKey()), self());
     }
 
     public static Props props() {

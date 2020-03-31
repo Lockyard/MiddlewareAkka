@@ -1,19 +1,44 @@
 package it.polimi.middleware.client;
 
+import akka.actor.ActorRef;
+import akka.actor.ActorSystem;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
+import it.polimi.middleware.messages.GetMsg;
 import it.polimi.middleware.messages.ReplyGetMsg;
 import it.polimi.middleware.messages.ReplyPutMsg;
+
+import java.io.File;
+import java.util.Scanner;
 
 public class ClientApp {
 
     public static void main (String[] args) {
+        final Config conf = ConfigFactory.parseFile(new File("client.conf"));
+        final ActorSystem sys = ActorSystem.create("Client", conf);
+        final ActorRef client = sys.actorOf(ClientActor.props("127.0.0.1"), "ClientActor");
+
+        final Scanner scanner = new Scanner(System.in);
+
+        while (true) {
+            final String content = scanner.nextLine();
+            if (content.equals("quit")) {
+                break;
+            } else {
+                client.tell(new GetMsg(content), ActorRef.noSender());
+            }
+        }
+
+        scanner.close();
+        sys.terminate();
 
     }
 
-    public void receiveGetReply(ReplyGetMsg msg) {
+    public static void receiveGetReply(ReplyGetMsg msg) {
 
     }
 
-    public void receivePutReply(ReplyPutMsg msg) {
+    public static void receivePutReply(ReplyPutMsg msg) {
 
     }
 }

@@ -16,12 +16,10 @@ public class ClientActor extends AbstractActor {
 
     private ActorSelection server;
     private String serverAddress;
-    private ClientApp clientApp;
 
-    @SuppressWarnings("unused")
-    public ClientActor(String serverAddress, ClientApp clientApp) {
+
+    public ClientActor(String serverAddress) {
         this.serverAddress = serverAddress;
-        this.clientApp = clientApp;
     }
 
     @Override
@@ -37,13 +35,13 @@ public class ClientActor extends AbstractActor {
                 .match(GetMsg.class, msg -> server.tell(msg, self()))
                 .match(PutMsg.class, msg -> server.tell(msg, self()))
                 //if it receives a reply, tell it to the client app
-                .match(ReplyGetMsg.class, msg -> clientApp.receiveGetReply(msg))
-                .match(ReplyPutMsg.class, msg -> clientApp.receivePutReply(msg))
+                .match(ReplyGetMsg.class, msg -> ClientApp.receiveGetReply(msg))
+                .match(ReplyPutMsg.class, msg -> ClientApp.receivePutReply(msg))
                 .build();
     }
 
 
-    public static Props props(String serverAddress, ClientApp clientApp) {
-        return Props.create(ClientActor.class, serverAddress, clientApp);
+    public static Props props(String serverAddress) {
+        return Props.create(ClientActor.class, serverAddress);
     }
 }
