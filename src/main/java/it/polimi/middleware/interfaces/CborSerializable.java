@@ -1,4 +1,4 @@
-package it.polimi.middleware.server.interfaces;
+package it.polimi.middleware.interfaces;
 
 /**
  * As used in the akka documentation example:

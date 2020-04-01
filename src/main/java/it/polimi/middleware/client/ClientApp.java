@@ -14,9 +14,9 @@ import java.util.Scanner;
 public class ClientApp {
 
     public static void main (String[] args) {
-        final Config conf = ConfigFactory.parseFile(new File("client.conf"));
+        final Config conf = ConfigFactory.parseFile(new File("conf/client.conf"));
         final ActorSystem sys = ActorSystem.create("Client", conf);
-        final ActorRef client = sys.actorOf(ClientActor.props("127.0.0.1"), "ClientActor");
+        final ActorRef client = sys.actorOf(ClientActor.props("ServerSystem@127.0.0.1:9000"), "ClientActor");
 
         final Scanner scanner = new Scanner(System.in);
 
@@ -35,10 +35,10 @@ public class ClientApp {
     }
 
     public static void receiveGetReply(ReplyGetMsg msg) {
-
+        System.out.println("Client received replyGetMSG: " + msg);
     }
 
     public static void receivePutReply(ReplyPutMsg msg) {
-
+        System.out.println("Client received replyPutMSG: " + msg);
     }
 }

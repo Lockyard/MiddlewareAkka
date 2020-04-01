@@ -25,7 +25,8 @@ public class ClientActor extends AbstractActor {
     @Override
     public void preStart() throws Exception {
         super.preStart();
-        server = getContext().actorSelection("akka.tcp://" + serverAddress + " /user/MasterNode");
+        server = getContext().actorSelection("akka.tcp://" + serverAddress + "/user/MasterNode");
+        System.out.println("ClientActor Prestart, server is at path: " + "akka.tcp://" + serverAddress + "/user/MasterNode");
     }
 
     @Override

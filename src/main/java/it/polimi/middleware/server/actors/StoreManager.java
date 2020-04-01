@@ -13,7 +13,7 @@ public class StoreManager extends AbstractActor {
     // Subscribe to cluster
     @Override
     public void preStart() {
-        cluster.subscribe(self());
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class);
     }
 
     // Re-subscribe when restart

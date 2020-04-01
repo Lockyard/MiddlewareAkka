@@ -4,6 +4,7 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.cluster.Cluster;
+import akka.cluster.ClusterEvent;
 import it.polimi.middleware.messages.ServiceMessage;
 
 public class MasterNode extends AbstractActor {
@@ -16,7 +17,7 @@ public class MasterNode extends AbstractActor {
     public void preStart() throws Exception {
         super.preStart();
         storeManager = getContext().actorOf(StoreManager.props());
-        cluster.subscribe(self());
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class);
     }
 
     // Although we assume the master node to never fail, unsuscribe it from cluster on stop

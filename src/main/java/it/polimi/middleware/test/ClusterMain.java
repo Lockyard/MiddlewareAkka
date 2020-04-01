@@ -18,7 +18,7 @@ public class ClusterMain {
 		for (final String port : ports) {
 			// Override the configuration of the port
 			final Config config = ConfigFactory //
-			    .parseFile(new File("conf/cluster.conf")) //
+			    .parseFile(new File("cluster.conf")) //
 			    .withValue("akka.remote.netty.tcp.port", ConfigValueFactory.fromAnyRef(port));
 
 			// Create an Akka system
