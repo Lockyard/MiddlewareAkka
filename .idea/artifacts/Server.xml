@@ -1,0 +1,45 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="Server">
+    <output-path>$PROJECT_DIR$/out/artifacts/Server</output-path>
+    <root id="archive" name="MiddlewareAkka.jar">
+      <element id="directory" name="META-INF">
+        <element id="file-copy" path="$PROJECT_DIR$/manifests/server/META-INF/MANIFEST.MF" />
+      </element>
+      <element id="module-output" name="MiddlewareAkka" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/io/aeron/aeron-client/1.15.1/aeron-client-1.15.1.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-coordination_2.12/2.5.26/akka-coordination_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-stream_2.12/2.5.26/akka-stream_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-remote_2.12/2.5.26/akka-remote_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-cluster_2.12/2.5.26/akka-cluster_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/io/aeron/aeron-driver/1.15.1/aeron-driver-1.15.1.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-actor_2.12/2.5.26/akka-actor_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-protobuf_2.12/2.5.26/akka-protobuf_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/reactivestreams/reactive-streams/1.0.2/reactive-streams-1.0.2.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/config/1.3.3/config-1.3.3.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/scala-lang/scala-library/2.12.10/scala-library-2.12.10.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/io/netty/netty/3.10.6.Final/netty-3.10.6.Final.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/akka/akka-cluster-tools_2.12/2.5.26/akka-cluster-tools_2.12-2.5.26.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/agrona/agrona/0.9.31/agrona-0.9.31.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/scala-lang/modules/scala-parser-combinators_2.12/1.1.2/scala-parser-combinators_2.12-1.1.2.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/scala-lang/modules/scala-java8-compat_2.12/0.9.0/scala-java8-compat_2.12-0.9.0.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/typesafe/ssl-config-core_2.12/0.3.8/ssl-config-core_2.12-0.3.8.jar" path-in-jar="/" />
+      <element id="library" level="project" name="Maven: org.scala-lang:scala-library:2.12.10" />
+      <element id="library" level="project" name="Maven: org.scala-lang.modules:scala-java8-compat_2.12:0.9.0" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-actor_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: com.typesafe:config:1.3.3" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-remote_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-stream_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: org.reactivestreams:reactive-streams:1.0.2" />
+      <element id="library" level="project" name="Maven: com.typesafe:ssl-config-core_2.12:0.3.8" />
+      <element id="library" level="project" name="Maven: org.scala-lang.modules:scala-parser-combinators_2.12:1.1.2" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-protobuf_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: io.netty:netty:3.10.6.Final" />
+      <element id="library" level="project" name="Maven: io.aeron:aeron-driver:1.15.1" />
+      <element id="library" level="project" name="Maven: org.agrona:agrona:0.9.31" />
+      <element id="library" level="project" name="Maven: io.aeron:aeron-client:1.15.1" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-cluster_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-cluster-tools_2.12:2.5.26" />
+      <element id="library" level="project" name="Maven: com.typesafe.akka:akka-coordination_2.12:2.5.26" />
+    </root>
+  </artifact>
+</component>
