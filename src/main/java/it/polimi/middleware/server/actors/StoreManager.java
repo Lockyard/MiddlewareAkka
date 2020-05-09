@@ -16,6 +16,7 @@ import it.polimi.middleware.server.messages.UpdateStoreNodeStatusMsg;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 
 /**
  * The node underlying the MasterNode. Manages everything conceiving the store: underlying nodes with their workers,
@@ -24,28 +25,34 @@ import java.util.List;
 public class StoreManager extends AbstractActor {
     private final Cluster cluster = Cluster.get(getContext().system());
 
-    private int hashSpacePartition;
-    private int minimumDataCopies;
+    //In how many partitions the key space is divided
+    private final int hashSpacePartition;
+    //for each partition, minimum amount of node replicas of the same data there must be
+    private final int minimumDataReplicas;
+
+    private final Random r;
 
     /**
      * List of lists of storeNodes. Each list in the list contains all nodes belonging to the same partition.
      * Size of the external list will be the number of divisions of the hash space, while
-     * internal sublists will have each all the nodes containing copies of the same data
+     * internal sublists will have each all the nodes containing replicas of the same data
      */
-    private List<List<ActorRef>> storeNodesLists;
+    private final List<List<ActorRef>> storeNodesLists;
 
     public StoreManager() {
-        //load from config file how much to divide hash space and how many copies of data must be active
+        //load from config file how much to divide hash space and how many replicas of data must be active
         Config conf = ConfigFactory.load("conf/store.conf");
         hashSpacePartition = conf.getInt("store.hashSpacePartition");
-        minimumDataCopies = conf.getInt("store.dataCopies");
+        minimumDataReplicas = conf.getInt("store.dataReplicas");
 
         //prepare the list of lists with the specified capacities:
-        //external list is size of the partition of space, each sublist is size of the number of copies
+        //external list is size of the partition of space, each sublist is size of the number of replicas
         storeNodesLists = new ArrayList<>(hashSpacePartition);
-        for (int i = 0; i < minimumDataCopies; i++) {
-            storeNodesLists.add(new ArrayList<>(minimumDataCopies));
+        for (int i = 0; i < hashSpacePartition; i++) {
+            storeNodesLists.add(new ArrayList<>(minimumDataReplicas));
         }
+
+        r = new Random(System.currentTimeMillis());
     }
 
     // Subscribe to cluster
@@ -76,8 +83,8 @@ public class StoreManager extends AbstractActor {
      */
     private void localFillStoreRequirements() {
         for (int i = 0; i < hashSpacePartition; i++) {
-            //for each partition, fill its list up to #dataCopies members
-            for (int j = storeNodesLists.get(i).size(); j < minimumDataCopies; j++) {
+            //for each partition, fill its list up to #dataReplicas members
+            for (int j = storeNodesLists.get(i).size(); j < minimumDataReplicas; j++) {
                 //load conf file
                 Config conf = ConfigFactory.load("conf/cluster.conf")
                         .withValue("akka.remote.netty.tcp.port", ConfigValueFactory.fromAnyRef(0)) //
@@ -98,7 +105,7 @@ public class StoreManager extends AbstractActor {
      */
     private void sendSetupMessagesToStoreNodes() {
 
-        //for each partition (= for each set of copies)
+        //for each partition (= for each set of replicas)
         for (int i = 0; i < storeNodesLists.size(); i++) {
 
             //update the first node, the leader one
@@ -129,12 +136,27 @@ public class StoreManager extends AbstractActor {
         }
     }
 
+    /**
+     * On get message forward it to the correct partition, to a replica, keeping the workload balanced
+     * @param msg the get message incoming
+     */
     public void onGetMessage(GetMsg msg) {
-
+        int assignedPartition = msg.getKey().hashCode() % hashSpacePartition;
+        //take a random node in the assigned partition of the key string in the get message
+        storeNodesLists.get(assignedPartition).get(r.nextInt(storeNodesLists.get(assignedPartition).size()))
+                .forward(msg, getContext());
     }
 
+    /**
+     * On put message, forward it to each node in the correct partition.
+     * @param msg the put message incoming
+     */
     public void onPutMessage(PutMsg msg) {
+        int assignedPartition = msg.getKey().hashCode() % hashSpacePartition;
 
+        for (ActorRef storeNodeRef: storeNodesLists.get(assignedPartition)) {
+            storeNodeRef.forward(msg, getContext());
+        }
     }
 
 

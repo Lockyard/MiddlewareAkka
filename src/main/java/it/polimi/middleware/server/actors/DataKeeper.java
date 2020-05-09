@@ -39,7 +39,7 @@ public class DataKeeper extends AbstractActor {
 
     private void onGetMsg(GetMsg msg) {
         ValueData keyData = data.get(msg.getKey());
-        sender().tell(new ReplyGetMsg(keyData.getContent()), self());
+        sender().tell(new ReplyGetMsg(keyData.getValue()), self());
     }
 
     private void onPutMsg(PutMsg msg) {

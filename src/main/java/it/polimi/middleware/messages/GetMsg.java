@@ -17,7 +17,7 @@ public class GetMsg extends ServiceMessage implements Serializable {
     /**
      * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
      */
-    private long msgID;
+    private long newness=0;
 
     public GetMsg(String key) {
         this.key = key;
@@ -27,16 +27,16 @@ public class GetMsg extends ServiceMessage implements Serializable {
         return key;
     }
 
-    public void setMsgID(long msgID) {
-        this.msgID = msgID;
+    public void setNewness(long newness) {
+        this.newness = newness;
     }
 
-    public long getMsgID() {
-        return msgID;
+    public long getNewness() {
+        return newness;
     }
 
     @Override
     public String toString() {
-        return "GetMsg[K:"+key+"]";
+        return "GetMsg[Key:"+key+", Newness:"+newness+"]";
     }
 }
