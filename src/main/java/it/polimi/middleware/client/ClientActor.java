@@ -36,8 +36,8 @@ public class ClientActor extends AbstractActor {
                 .match(GetMsg.class, msg -> server.tell(msg, self()))
                 .match(PutMsg.class, msg -> server.tell(msg, self()))
                 //if it receives a reply, tell it to the client app
-                .match(ReplyGetMsg.class, msg -> ClientApp.receiveGetReply(msg))
-                .match(ReplyPutMsg.class, msg -> ClientApp.receivePutReply(msg))
+                .match(ReplyGetMsg.class, ClientApp::receiveGetReply)
+                .match(ReplyPutMsg.class, ClientApp::receivePutReply)
                 .build();
     }
 

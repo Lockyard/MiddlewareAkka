@@ -9,10 +9,12 @@ import akka.util.Timeout;
 import it.polimi.middleware.messages.GetMsg;
 import it.polimi.middleware.messages.PutMsg;
 import it.polimi.middleware.messages.ReplyGetMsg;
+import it.polimi.middleware.messages.ReplyPutMsg;
 import it.polimi.middleware.server.messages.DataValidationMsg;
 import it.polimi.middleware.server.messages.UpdateStoreNodeStatusMsg;
 import it.polimi.middleware.server.messages.ValidDataRequestMsg;
 import it.polimi.middleware.server.store.ValueData;
+import it.polimi.middleware.util.Logger;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
 
@@ -103,52 +105,67 @@ public class StoreNode extends AbstractActorWithStash {
      * On a get message a store node checks if has a valid ValueData. If yes, returns it.
      * If not, ask to the previous replica in the hierarchical-list to have a valid one. On return of a valid
      * valueData also update the content of the ValueData in its memory.
-     * @param getMsg
+     * @param getMsg the get message
      */
     private void onGetMessage(GetMsg getMsg) {
-
-        //TODO check if data.get can return null
-        ValueData vd = data.get(getMsg.getKey());
-        //if requested data is of the same newness in this replica then return it. Otherwise ask it to the previous replica
-        if(vd.getNewness() == getMsg.getNewness()) {
-            sender().tell(new ReplyGetMsg(vd.getValue()), self());
-        }
-        //if requested data is not valid, ask to the previous replica for it, and also update this valueData in the process
-        else {
-            Timeout timeout = Timeout.create(Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA));
-            Future<Object> dataReplyFuture = Patterns.ask(previousReplica,
-                    new ValidDataRequestMsg(getMsg.getKey()), timeout);
-
-            try {
-                //TODO qol is avoid blocking and implement e.g. a pool of futures and a thread which checks it
-                //TODO and clean it every [timeout] seconds. CompletableFuture seems to work except
-                //TODO ask().toCompletableFuture() doesn't exist for some reason as method, although is in the doc
-                ValueData newVD = (ValueData)Await.result(dataReplyFuture, timeout.duration());
-
-                data.get(getMsg.getKey()).update(newVD);
-
+        //if there is some datum is in memory at the specified key, get it
+        if(data.containsKey(getMsg.getKey())) {
+            ValueData vd = data.get(getMsg.getKey());
+            //if it's ok wrt newness, reply and don't request the datum to the previous replica
+            if(getMsg.getNewness() == vd.getNewness()) {
                 sender().tell(new ReplyGetMsg(vd.getValue()), self());
-
-            } catch (InterruptedException | TimeoutException | ClassCastException e) {
-                e.printStackTrace();
+            }
+            //if message's newness is higher, this node has yet to be updated on that datum. Ask the datum to the next replica
+            else if (getMsg.getNewness() > vd.getNewness()){
+                askToPreviousReplicaForData(getMsg.getKey(), getMsg.getNewness());
+            } //if message's newness is less than this node datum's newness, check the history of last writes and recover the
+            //requested value
+            else {
+                checkHistoryForMessage(getMsg.getKey(), getMsg.getNewness());
+            }
+        }
+        //if no datum is in, if the newness requested is the default one, return null content. otherwise, ask it to
+        //the previous replica
+        else {
+            if(getMsg.getNewness() == ValueData.DEFAULT_NEWNESS) {
+                sender().tell(new ReplyGetMsg(null), self());
+            } else {
+                askToPreviousReplicaForData(getMsg.getKey(), getMsg.getNewness());
             }
         }
     }
 
+
+
     /**
-     * On put message, update the ValueData in the memory at the key specified.
-     * if this replica is leader, then the new ValueData is considered valid, otherwise is set to invalid
+     * On put message, update the ValueData in the memory at the key specified, only if this replica is leader
+     * or the sender of the putMsg was this' previous replica.
+     * Then reply if it's ok according to the number of writes requested in the put message.
+     * Finally send this put message to the next replica in the hierarchical list
      * @param putMsg
      */
     private void onPutMessage(PutMsg putMsg) {
         //if is leader or if it comes from its previous replica update the old valueData with the one in the put
-        if(isLeader || sender().compareTo(previousReplica) == 0)
-            data.get(putMsg.getKey()).updateValueDataIfNewer(putMsg.getVal(), putMsg.getNewness());
+        if(isLeader || sender().compareTo(previousReplica) == 0) {
+            data.get(putMsg.getKey()).updateIfNewer(putMsg.getVal(), putMsg.getNewness());
+            Logger.std.log(Logger.LogLevel.DEBUG, "> StoreNode " + self().path().name() + " stored " + putMsg);
+            //if the putMessage allows this copy to reply (since already K-writes of the data occurred), or if this
+            //is the last replica, then reply
+            if (putMsg.shouldReplyAfterThisWrite() || isLast) {
+                sender().tell(new ReplyPutMsg(true), self());
+            }
 
-        //if is not the last in the hierarchy, forward the message with itself as sender
-        if(!isLast) {
-            nextReplica.tell(putMsg, self());
+            //if is not the last in the hierarchy, forward the message with itself as sender
+            if(!isLast) {
+                nextReplica.tell(putMsg, self());
+                Logger.std.log(Logger.LogLevel.VERBOSE, "> Forwarded putMsg to next replica");
+            }
+        } else {
+            Logger.std.log(Logger.LogLevel.ERROR, "Sender " + sender().path().name() + " sent a put but is not" +
+                    " this node's previous replica, and this node is not the leader. New data was not written");
+            sender().tell(new ReplyPutMsg(false), self());
         }
+
     }
 
     /**
@@ -163,14 +180,55 @@ public class StoreNode extends AbstractActorWithStash {
 
     private void onUnknownMessage(Object unknownMsg) {
         //simply log the unknown message
-        System.out.println("Unkown message received by " + self().path().name() +": " + unknownMsg);
+        Logger.std.log(Logger.LogLevel.VERBOSE, "Unkown message received by " + self().path().name() +": " + unknownMsg);
     }
 
 
 
 
-    public static Props props(int hashSpacePartition, int partitionNumber, int nodeNumber) {
-        return Props.create(StoreNode.class, hashSpacePartition, partitionNumber, nodeNumber);
+    public static Props props(int hashSpacePartition, int partitionNumber, int nodeNumber, boolean isLeader, ActorRef storeManager) {
+        return Props.create(StoreNode.class, hashSpacePartition, partitionNumber, nodeNumber, isLeader, storeManager);
+    }
+
+
+    ///Other private methods
+
+    /**
+     * Ask for a specific datum, given the key, to the previous replica.
+     * Updates the datum in memory if newer and reply to the user if consistent wrt newness, otherwise will proceed
+     * to recover the old datum.
+     * @param key
+     */
+    private void askToPreviousReplicaForData(String key, long newness) {
+        Timeout timeout = Timeout.create(Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA));
+        Future<Object> dataReplyFuture = Patterns.ask(previousReplica,
+                new ValidDataRequestMsg(key), timeout);
+
+        try {
+            //TODO qol is avoid blocking and implement e.g. a pool of futures and a thread which checks it
+            //TODO and clean it every [timeout] seconds. CompletableFuture seems to work except
+            //TODO ask().toCompletableFuture() doesn't exist for some reason as method, although is in the doc
+            ValueData newVD = (ValueData)Await.result(dataReplyFuture, timeout.duration());
+
+            //it could still be possible, when it won't await, that the received datum is now older than one passed in the meanwhile
+            data.get(key).updateIfNewer(newVD);
+
+            if(newness == newVD.getNewness()) {
+                sender().tell(new ReplyGetMsg(newVD.getValue()), self());
+            }
+            //if even now newness is not coherent, the value is lost
+            else {
+
+            }
+
+
+        } catch (InterruptedException | TimeoutException | ClassCastException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void checkHistoryForMessage(String key, long newness) {
+        //TODO implement a history which stores the last N put operations, to recover old values no more in data
     }
 
     ///////STATICS

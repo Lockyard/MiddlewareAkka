@@ -19,8 +19,12 @@ public class ReplyGetMsg extends ServiceMessage implements Serializable {
         return content;
     }
 
+    public final boolean isNullContent() {
+        return content == null;
+    }
+
     @Override
     public String toString() {
-        return "ReplyGetMsg[Content:" + content + "]";
+        return isNullContent() ? "ReplyGetMsg[null]" : "ReplyGetMsg[Content: " + content + "]";
     }
 }

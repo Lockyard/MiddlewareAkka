@@ -53,6 +53,8 @@ public class StoreManager extends AbstractActor {
         }
 
         r = new Random(System.currentTimeMillis());
+
+        localFillStoreRequirements();
     }
 
     // Subscribe to cluster
@@ -91,8 +93,9 @@ public class StoreManager extends AbstractActor {
                         .withValue("akka.cluster.roles", ConfigValueFactory.fromIterable(Collections.singletonList("storeNode")));
 
                 ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
-                //create the new storeNode. Name: storeNode_Px_Cy, where Px indicates Partition x, Ny indicates Node number y (of that partition)
-                storeNodesLists.get(i).add(as.actorOf(StoreNode.props(hashSpacePartition, i, j), "storeNode_P"+i+"_N"+j));
+                //create the new storeNode. Name: storeNode_Px_Cy, where Px indicates Partition x,
+                //Ny indicates Node number y (of that partition). The replica is leader only if j == 0, which is the first created
+                storeNodesLists.get(i).add(as.actorOf(StoreNode.props(hashSpacePartition, i, j, j==0, self()), "storeNode_P"+i+"_N"+j));
             }
         }
 
@@ -137,7 +140,8 @@ public class StoreManager extends AbstractActor {
     }
 
     /**
-     * On get message forward it to the correct partition, to a replica, keeping the workload balanced
+     * On get message forward it to the correct partition, to one among the available replicas,
+     * keeping the workload balanced
      * @param msg the get message incoming
      */
     public void onGetMessage(GetMsg msg) {
@@ -148,15 +152,12 @@ public class StoreManager extends AbstractActor {
     }
 
     /**
-     * On put message, forward it to each node in the correct partition.
+     * On put message, forward it to the leader of the partition
      * @param msg the put message incoming
      */
     public void onPutMessage(PutMsg msg) {
         int assignedPartition = msg.getKey().hashCode() % hashSpacePartition;
-
-        for (ActorRef storeNodeRef: storeNodesLists.get(assignedPartition)) {
-            storeNodeRef.forward(msg, getContext());
-        }
+        storeNodesLists.get(assignedPartition).get(0).forward(msg, context());
     }
 
 

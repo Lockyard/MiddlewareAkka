@@ -7,6 +7,8 @@ import java.io.Serializable;
  * coherent with client requests
  */
 public class ValueData implements Serializable {
+    public static final int DEFAULT_NEWNESS = 0;
+
     private String value;
     /**
      * newness is a value assigned by the leader replica and increased every time the value is updated by the leader replica
@@ -19,7 +21,7 @@ public class ValueData implements Serializable {
      */
     public ValueData(String value) {
         this.value = value;
-        newness = 0;
+        newness = DEFAULT_NEWNESS;
     }
 
     private ValueData(ValueData otherVD) {
@@ -34,7 +36,7 @@ public class ValueData implements Serializable {
      * @param newData the new ValueData from which to copy new values
      * @return true if the data was overridden with the new data. False if nothing changed.
      */
-    public boolean updateValueDataIfNewer(ValueData newData) {
+    public boolean updateIfNewer(ValueData newData) {
         if(newData.getNewness() < getNewness())
             return false;
         this.value = newData.value;
@@ -48,7 +50,7 @@ public class ValueData implements Serializable {
      * @param newness the newness of the new value
      * @return true if the data was overridden with the new data. False if nothing changed.
      */
-    public boolean updateValueDataIfNewer(String newValue, long newness) {
+    public boolean updateIfNewer(String newValue, long newness) {
         if(newness < getNewness())
             return false;
         this.value = newValue;
