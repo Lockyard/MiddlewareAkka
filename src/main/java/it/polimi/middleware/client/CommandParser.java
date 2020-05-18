@@ -15,15 +15,15 @@ public class CommandParser {
      * @param line
      * @return
      */
-    public List<ServiceMessage> parseLine(String line) {
+    public static List<ServiceMessage> parseLine(String line) {
 
         if(line.startsWith("h")) {
             //TODO-i getrange and putrange
             System.out.println("COMMANDS:\n" +
                     "put k v\t-> put in key k the value v\n" +
                     "get k\t-> get the value in key k\n" +
-                    "getr k1 k2\t-> get all the values between k1 and k2. k1 and k2 must be numbers\n" +
-                    "putr k1 k2 v\t-> put value v in all the keys from k1 to k2. k1 and k2 must be numbers" +
+                    "getr k1 k2\t-> get all the values between k1 and k2 (both included). k1 and k2 must be numbers\n" +
+                    "putr k1 k2 v\t-> put value v in all the keys from k1 to k2 (both included). k1 and k2 must be numbers" +
                     "Separate more command with a line to perform multiple commands, e.g:\n" +
                     "put fookey barvalue,get fookey");//
             //return an empty list
@@ -48,7 +48,7 @@ public class CommandParser {
      * Parse a single command
      * @return list of messages obtained by parsing the command
      */
-    private List<ServiceMessage> parseSingleCommand(String line) {
+    private static List<ServiceMessage> parseSingleCommand(String line) {
         try {
             ArrayList<ServiceMessage> messages = new ArrayList<>();
             StringTokenizer argumentTokenizer = new StringTokenizer(line, " ");
@@ -66,13 +66,19 @@ public class CommandParser {
                         break;
                     case "getr":
                     case "getrange":
-                        for (int i = Integer.parseInt(argumentTokenizer.nextToken()); i < Integer.parseInt(argumentTokenizer.nextToken()); i++) {
+                        int baseI = Integer.parseInt(argumentTokenizer.nextToken());
+                        int maxI = Integer.parseInt(argumentTokenizer.nextToken());
+                        for (int i = baseI; i <= maxI; i++) {
                             messages.add(new GetMsg(Integer.toString(i)));
                         }
                         break;
+                    case "putr":
                     case "putrange":
-                        for (int i = Integer.parseInt(argumentTokenizer.nextToken()); i < Integer.parseInt(argumentTokenizer.nextToken()); i++) {
-                            messages.add(new PutMsg(Integer.toString(i), argumentTokenizer.nextToken()));
+                        baseI = Integer.parseInt(argumentTokenizer.nextToken());
+                        maxI = Integer.parseInt(argumentTokenizer.nextToken());
+                        String value = argumentTokenizer.nextToken();
+                        for (int i = baseI; i <= maxI; i++) {
+                            messages.add(new PutMsg(Integer.toString(i), value));
                         }
                         break;
 
@@ -90,7 +96,7 @@ public class CommandParser {
 
     }
 
-    private void unrecognizedCommand(String command) {
+    private static void unrecognizedCommand(String command) {
         System.out.println("\""+command+"\" was not recognized as a command and was skipped");
     }
 }
