@@ -52,10 +52,7 @@ public class PutMsg extends ServiceMessage implements Serializable {
 
 
 
-    @Override
-    public String toString() {
-        return "PutMsg[Key:" + key + ", Value:" + val + ", Newness: " + newness + "]";
-    }
+
 
     /**
      * Ask to this message if there should be a reply now. This method is supposed to be called after a write on the
@@ -104,5 +101,10 @@ public class PutMsg extends ServiceMessage implements Serializable {
 
     public void setWritesUntilReply(byte writesUntilReply) {
         this.writesUntilReply = writesUntilReply;
+    }
+
+    @Override
+    public String toString() {
+        return "PutMsg[Key:" + key + ", Value:" + val + ", Newness:" + newness + "]";
     }
 }

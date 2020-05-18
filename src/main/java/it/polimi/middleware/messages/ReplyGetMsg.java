@@ -9,14 +9,19 @@ public class ReplyGetMsg extends ServiceMessage implements Serializable {
 
     private static final long serialVersionUID = 91999929292999L;
 
-    private final String content;
+    private final String content, key;
 
-    public ReplyGetMsg(String content) {
+    public ReplyGetMsg(String key, String content) {
         this.content = content;
+        this.key = key;
     }
 
     public final String getContent() {
         return content;
+    }
+
+    public String getKey() {
+        return key;
     }
 
     public final boolean isNullContent() {
@@ -25,6 +30,6 @@ public class ReplyGetMsg extends ServiceMessage implements Serializable {
 
     @Override
     public String toString() {
-        return isNullContent() ? "ReplyGetMsg[null]" : "ReplyGetMsg[Content: " + content + "]";
+        return isNullContent() ? "ReplyGetMsg[null @K:"+key+"]" : "ReplyGetMsg[K:" + key + ", V:" + content + "]";
     }
 }

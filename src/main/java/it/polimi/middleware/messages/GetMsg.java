@@ -37,6 +37,6 @@ public class GetMsg extends ServiceMessage implements Serializable {
 
     @Override
     public String toString() {
-        return "GetMsg[Key:"+key+", Newness:"+newness+"]";
+        return "GetMsg[K:"+key+", Newness:"+newness+"]";
     }
 }

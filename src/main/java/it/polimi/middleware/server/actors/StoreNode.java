@@ -116,7 +116,7 @@ public class StoreNode extends AbstractActorWithStash {
             ValueData vd = data.get(getMsg.getKey());
             //if it's ok wrt newness, reply and don't request the datum to the previous replica
             if(getMsg.getNewness() == vd.getNewness()) {
-                sender().tell(new ReplyGetMsg(vd.getValue()), self());
+                sender().tell(new ReplyGetMsg(getMsg.getKey(), vd.getValue()), self());
             }
             //if message's newness is higher, this node has yet to be updated on that datum. Ask the datum to the next replica
             else if (getMsg.getNewness() > vd.getNewness()){
@@ -131,7 +131,7 @@ public class StoreNode extends AbstractActorWithStash {
         //the previous replica
         else {
             if(getMsg.getNewness() == ValueData.DEFAULT_NEWNESS) {
-                sender().tell(new ReplyGetMsg(null), self());
+                sender().tell(new ReplyGetMsg(getMsg.getKey(), null), self());
             } else {
                 askToPreviousReplicaForData(getMsg.getKey(), getMsg.getNewness());
             }
@@ -160,7 +160,7 @@ public class StoreNode extends AbstractActorWithStash {
         //if the putMessage allows this copy to reply (since already K-writes of the data occurred), or if this
         //is the last replica, then reply
         if (putMsg.shouldReplyAfterThisWrite() || (isLast && putMsg.requiresReply())) {
-            sender().tell(new ReplyPutMsg(true), self());
+            sender().tell(new ReplyPutMsg(putMsg.getKey(), putMsg.getVal(), true), self());
         }
 
         //if is not the last in the hierarchy, forward to next replica
@@ -216,7 +216,7 @@ public class StoreNode extends AbstractActorWithStash {
             data.get(key).updateIfNewer(newVD);
 
             if(newness == newVD.getNewness()) {
-                sender().tell(new ReplyGetMsg(newVD.getValue()), self());
+                sender().tell(new ReplyGetMsg(key, newVD.getValue()), self());
             }
             //if even now newness is not coherent, the value is lost
             else {
