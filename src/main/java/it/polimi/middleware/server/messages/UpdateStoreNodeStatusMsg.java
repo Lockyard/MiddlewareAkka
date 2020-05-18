@@ -10,6 +10,9 @@ import akka.actor.ActorRef;
  * replica
  */
 public class UpdateStoreNodeStatusMsg extends ServerMessage {
+
+    private static final long serialVersionUID = 881240900001232320L;
+
     private final ActorRef previousReplica, nextReplica, leaderReplica;
     private final boolean isLeader, isLast, requestDataFromLeader;
 
