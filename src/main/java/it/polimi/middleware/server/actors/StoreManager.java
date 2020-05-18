@@ -131,11 +131,13 @@ public class StoreManager extends AbstractActor {
                 storeNodesLists.get(i).get(j).tell(new UpdateStoreNodeStatusMsg(storeNodesLists.get(i).get(j-1),
                         storeNodesLists.get(i).get(j+1), false, false, false, ActorRef.noSender()), self());
             }
-            //update the last node
-            storeNodesLists.get(i).get(storeNodesLists.get(i).size()-1).tell(new UpdateStoreNodeStatusMsg(
-                    storeNodesLists.get(i).get(storeNodesLists.size()-2), ActorRef.noSender(), false, true, false, ActorRef.noSender()),
-                    self()
-            );
+            //update the last node if at least 2 elements in the list
+            if(storeNodesLists.get(i).size() > 1)
+                storeNodesLists.get(i).get(storeNodesLists.get(i).size()-1).tell(new UpdateStoreNodeStatusMsg(
+                        storeNodesLists.get(i).get(storeNodesLists.get(i).size()-2), ActorRef.noSender(), false, true, false, ActorRef.noSender()),
+                        self());
+
+
         }
     }
 

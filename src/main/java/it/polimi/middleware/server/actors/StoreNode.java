@@ -97,7 +97,10 @@ public class StoreNode extends AbstractActorWithStash {
             //TODO send a message to the leader replica asking for a copy of its data
             // msg.getLeaderReplica().tell(...);
         }
+        Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] updated status. Leader: " + isLeader + ", last: " +isLast +
+                ", previousReplica: " + previousReplica + ", nextReplica: " +nextReplica );
         getContext().become(active());
+
     }
 
 
@@ -145,27 +148,26 @@ public class StoreNode extends AbstractActorWithStash {
      * @param putMsg
      */
     private void onPutMessage(PutMsg putMsg) {
-        //if is leader or if it comes from its previous replica update the old valueData with the one in the put
-        if(isLeader || sender().compareTo(previousReplica) == 0) {
+        //update the old valueData with the one in the put
+        if(data.containsKey(putMsg.getKey())) {
             data.get(putMsg.getKey()).updateIfNewer(putMsg.getVal(), putMsg.getNewness());
-            Logger.std.log(Logger.LogLevel.DEBUG, "> StoreNode " + self().path().name() + " stored " + putMsg);
-            //if the putMessage allows this copy to reply (since already K-writes of the data occurred), or if this
-            //is the last replica, then reply
-            if (putMsg.shouldReplyAfterThisWrite() || isLast) {
-                sender().tell(new ReplyPutMsg(true), self());
-            }
-
-            //if is not the last in the hierarchy, forward the message with itself as sender
-            if(!isLast) {
-                nextReplica.tell(putMsg, self());
-                Logger.std.log(Logger.LogLevel.VERBOSE, "> Forwarded putMsg to next replica");
-            }
+            Logger.std.log(Logger.LogLevel.DEBUG, "> [" + self().path().name() + "]: updated " + putMsg);
         } else {
-            Logger.std.log(Logger.LogLevel.ERROR, "Sender " + sender().path().name() + " sent a put but is not" +
-                    " this node's previous replica, and this node is not the leader. New data was not written");
-            sender().tell(new ReplyPutMsg(false), self());
+            data.put(putMsg.getKey(), new ValueData(putMsg.getVal(), putMsg.getNewness()));
+            Logger.std.log(Logger.LogLevel.DEBUG, "> [" + self().path().name() + "]: stored " + putMsg);
         }
 
+        //if the putMessage allows this copy to reply (since already K-writes of the data occurred), or if this
+        //is the last replica, then reply
+        if (putMsg.shouldReplyAfterThisWrite() || (isLast && putMsg.requiresReply())) {
+            sender().tell(new ReplyPutMsg(true), self());
+        }
+
+        //if is not the last in the hierarchy, forward to next replica
+        if(!isLast) {
+            nextReplica.forward(putMsg, context());
+            Logger.std.log(Logger.LogLevel.VERBOSE, "> ["+self().path().name() + "]:Forwarded putMsg to next replica");
+        }
     }
 
     /**

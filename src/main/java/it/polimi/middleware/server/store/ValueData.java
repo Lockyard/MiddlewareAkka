@@ -24,6 +24,15 @@ public class ValueData implements Serializable {
         newness = DEFAULT_NEWNESS;
     }
 
+    /**
+     * Create a ValueData with specified value and newness 0
+     * @param value its contained value
+     */
+    public ValueData(String value, long newness) {
+        this.value = value;
+        this.newness = newness;
+    }
+
     private ValueData(ValueData otherVD) {
         this.value = otherVD.value;
         this.newness = otherVD.newness;

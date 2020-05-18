@@ -33,6 +33,8 @@ public class PutMsg extends ServiceMessage implements Serializable {
         this.key = key;
         this.val = val;
         writesUntilReply = 1;
+        //default newness is 0
+        newness = 0;
     }
 
     /**
@@ -45,6 +47,7 @@ public class PutMsg extends ServiceMessage implements Serializable {
         this.key = key;
         this.val = val;
         this.writesUntilReply = writesUntilReply;
+        newness = 0;
     }
 
 
@@ -69,6 +72,14 @@ public class PutMsg extends ServiceMessage implements Serializable {
             writesUntilReply--;
             return writesUntilReply == 0;
         }
+    }
+
+    /**
+     * Ask if this put message has yet to be replied to
+     * @return true if hasn't yet told to anyone to reply to this message
+     */
+    public boolean requiresReply() {
+        return writesUntilReply > 0;
     }
 
     public final String getKey() {

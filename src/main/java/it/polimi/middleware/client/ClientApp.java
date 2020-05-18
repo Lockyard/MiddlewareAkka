@@ -8,6 +8,7 @@ import com.typesafe.config.ConfigValueFactory;
 import it.polimi.middleware.messages.GetMsg;
 import it.polimi.middleware.messages.ReplyGetMsg;
 import it.polimi.middleware.messages.ReplyPutMsg;
+import it.polimi.middleware.messages.ServiceMessage;
 
 import java.io.File;
 import java.util.Collections;
@@ -36,11 +37,16 @@ public class ClientApp {
 
         //Loop which handles messages to send to the ClientActor, from which will be sent to the server
         while (true) {
-            final String content = scanner.nextLine();
-            if (content.equals("quit")) {
+            final String command = scanner.nextLine();
+            if (command.equals("quit")) {
                 break;
             } else {
-                client.tell(new GetMsg(content), ActorRef.noSender());
+                //for each message parsed, send the message to the client actor
+                for (ServiceMessage sm :
+                        CommandParser.parseLine(command)) {
+                    client.tell(sm, ActorRef.noSender());
+                }
+
             }
         }
 

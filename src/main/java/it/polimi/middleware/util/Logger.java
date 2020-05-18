@@ -14,7 +14,7 @@ public class Logger {
         public int getLevel() {return level;}
     };
 
-    private LogLevel logLevel = LogLevel.DEBUG;
+    private LogLevel logLevel = LogLevel.VERBOSE;
 
     public void setLogLevel(LogLevel logLevel) {
         this.logLevel = logLevel;
