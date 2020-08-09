@@ -1,4 +1,4 @@
-package it.polimi.middleware.test.changebehavior.messages;
+package it.polimi.middleware.misc.changebehavior.messages;
 
 import java.io.Serializable;
 

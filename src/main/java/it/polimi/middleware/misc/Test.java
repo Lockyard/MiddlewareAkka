@@ -1,6 +1,5 @@
-package it.polimi.middleware.test;
+package it.polimi.middleware.misc;
 
-import java.sql.Timestamp;
 import java.util.HashMap;
 
 public class Test {

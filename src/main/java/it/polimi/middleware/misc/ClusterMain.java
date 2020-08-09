@@ -1,4 +1,4 @@
-package it.polimi.middleware.test;
+package it.polimi.middleware.misc;
 
 import akka.actor.ActorSystem;
 import com.typesafe.config.Config;

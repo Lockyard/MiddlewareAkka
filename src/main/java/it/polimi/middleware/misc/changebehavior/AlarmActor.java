@@ -1,10 +1,10 @@
-package it.polimi.middleware.test.changebehavior;
+package it.polimi.middleware.misc.changebehavior;
 
 import akka.actor.AbstractActor;
 import akka.actor.Props;
-import it.polimi.middleware.test.changebehavior.messages.ActivateMsg;
-import it.polimi.middleware.test.changebehavior.messages.DeactivateMsg;
-import it.polimi.middleware.test.changebehavior.messages.TriggerMsg;
+import it.polimi.middleware.misc.changebehavior.messages.ActivateMsg;
+import it.polimi.middleware.misc.changebehavior.messages.DeactivateMsg;
+import it.polimi.middleware.misc.changebehavior.messages.TriggerMsg;
 
 public class AlarmActor extends AbstractActor {
 	@Override
