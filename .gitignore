@@ -129,5 +129,5 @@ buildNumber.properties
 .flattened-pom.xml
 
 # End of https://www.gitignore.io/api/java,maven,intellij
-/src/main/java/it/polimi/middleware/misc/
-/src/main/java/it/polimi/middleware/misc/
+/src/main/java/it/polimi/middleware/zmisc/
+/src/main/java/it/polimi/middleware/zmisc/

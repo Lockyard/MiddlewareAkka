@@ -10,6 +10,7 @@ import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigValueFactory;
 import it.polimi.middleware.messages.GetMsg;
+import it.polimi.middleware.messages.GreetingMsg;
 import it.polimi.middleware.messages.PutMsg;
 import it.polimi.middleware.server.messages.UpdateStoreNodeStatusMsg;
 
@@ -75,6 +76,7 @@ public class StoreManager extends AbstractActor {
         return receiveBuilder()
                 .match(GetMsg.class, this::onGetMessage)
                 .match(PutMsg.class, this::onPutMessage)
+                .match(GreetingMsg.class, this::onGreetingMessage)
                 .build();
     }
 
@@ -160,6 +162,15 @@ public class StoreManager extends AbstractActor {
     public void onPutMessage(PutMsg msg) {
         int assignedPartition = msg.getKey().hashCode() % hashSpacePartition;
         storeNodesLists.get(assignedPartition).get(0).forward(msg, context());
+    }
+
+
+    /**
+     *
+     * @param msg
+     */
+    public void onGreetingMessage(GreetingMsg msg) {
+
     }
 
 

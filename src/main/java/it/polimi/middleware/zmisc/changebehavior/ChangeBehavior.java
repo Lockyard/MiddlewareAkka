@@ -1,10 +1,10 @@
-package it.polimi.middleware.misc.changebehavior;
+package it.polimi.middleware.zmisc.changebehavior;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
-import it.polimi.middleware.misc.changebehavior.messages.ActivateMsg;
-import it.polimi.middleware.misc.changebehavior.messages.DeactivateMsg;
-import it.polimi.middleware.misc.changebehavior.messages.TriggerMsg;
+import it.polimi.middleware.zmisc.changebehavior.messages.ActivateMsg;
+import it.polimi.middleware.zmisc.changebehavior.messages.DeactivateMsg;
+import it.polimi.middleware.zmisc.changebehavior.messages.TriggerMsg;
 
 import java.util.Scanner;
 

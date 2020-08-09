@@ -15,6 +15,7 @@ import it.polimi.middleware.server.messages.UpdateStoreNodeStatusMsg;
 import it.polimi.middleware.server.messages.ValidDataRequestMsg;
 import it.polimi.middleware.server.store.ValueData;
 import it.polimi.middleware.util.Logger;
+import scala.Option;
 import scala.concurrent.Await;
 import scala.concurrent.Future;
 
@@ -38,6 +39,8 @@ public class StoreNode extends AbstractActorWithStash {
     private ActorRef nextReplica, previousReplica, storeManager;
 
     private HashMap<String, ValueData> data;
+
+
 
     /**
      * New StoreNode with the specified hashPartition.
@@ -63,6 +66,12 @@ public class StoreNode extends AbstractActorWithStash {
     @Override
     public Receive createReceive() {
         return inactive();
+    }
+
+    @Override
+    public void preRestart(Throwable reason, Option<Object> message) throws Exception {
+        super.preRestart(reason, message);
+        getContext().become(inactive());
     }
 
     //Behaviors TODO
@@ -99,8 +108,9 @@ public class StoreNode extends AbstractActorWithStash {
         }
         Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] updated status. Leader: " + isLeader + ", last: " +isLast +
                 ", previousReplica: " + previousReplica + ", nextReplica: " +nextReplica );
-        getContext().become(active());
 
+        getContext().become(active());
+        unstashAll();
     }
 
 
@@ -168,6 +178,7 @@ public class StoreNode extends AbstractActorWithStash {
             nextReplica.forward(putMsg, context());
             Logger.std.log(Logger.LogLevel.VERBOSE, "> ["+self().path().name() + "]:Forwarded putMsg to next replica");
         }
+        
     }
 
     /**
@@ -182,7 +193,7 @@ public class StoreNode extends AbstractActorWithStash {
 
     private void onUnknownMessage(Object unknownMsg) {
         //simply log the unknown message
-        Logger.std.log(Logger.LogLevel.VERBOSE, "Unkown message received by " + self().path().name() +": " + unknownMsg);
+        Logger.std.log(Logger.LogLevel.VERBOSE, "Unknown message received by " + self().path().name() +": " + unknownMsg);
     }
 
 
@@ -202,6 +213,7 @@ public class StoreNode extends AbstractActorWithStash {
      * @param key
      */
     private void askToPreviousReplicaForData(String key, long newness) {
+        Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] requesting value with newness " +newness + " @K:" +key);
         Timeout timeout = Timeout.create(Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA));
         Future<Object> dataReplyFuture = Patterns.ask(previousReplica,
                 new ValidDataRequestMsg(key), timeout);
@@ -210,6 +222,7 @@ public class StoreNode extends AbstractActorWithStash {
             //TODO qol is avoid blocking and implement e.g. a pool of futures and a thread which checks it
             //TODO and clean it every [timeout] seconds. CompletableFuture seems to work except
             //TODO ask().toCompletableFuture() doesn't exist for some reason as method, although is in the doc
+
             ValueData newVD = (ValueData)Await.result(dataReplyFuture, timeout.duration());
 
             //it could still be possible, when it won't await, that the received datum is now older than one passed in the meanwhile

@@ -38,5 +38,13 @@ public class Logger {
             System.out.println(logMessage);
     }
 
+    /**
+     * Log in debug level something
+     */
+    public void dlog(String logMessage) {
+        if(this.logLevel.getLevel() <= LogLevel.DEBUG.level)
+            System.out.println(logMessage);
+    }
+
 
 }

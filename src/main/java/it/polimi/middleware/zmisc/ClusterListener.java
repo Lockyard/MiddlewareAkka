@@ -1,4 +1,4 @@
-package it.polimi.middleware.misc;
+package it.polimi.middleware.zmisc;
 
 import akka.actor.AbstractActor;
 import akka.actor.Props;
