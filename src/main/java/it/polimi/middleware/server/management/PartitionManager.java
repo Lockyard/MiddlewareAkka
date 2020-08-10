@@ -4,10 +4,7 @@ import akka.actor.ActorRef;
 import it.polimi.middleware.server.exceptions.NotEnoughNodesException;
 import it.polimi.middleware.util.Logger;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class PartitionManager {
 
@@ -126,57 +123,52 @@ public class PartitionManager {
         }
     }
 
-
     private void giveLoadToNewNode(ActorRef newNode) {
         //the load of the node that will be added, in terms of n of partitions assigned
-        int loadOfNewNode = (partitions * nReplicas) / nodes.size();
-        //at the moment every node handles at least this load
-        int baseCurrentLoad = (partitions * nReplicas) / (nodes.size()-1);
-        //but this amount of nodes has the previous load +1
-        int numOfExtraLoadedNodes = (partitions * nReplicas) % (nodes.size()-1);
+        int expectedLoadOfNewNode = (partitions * nReplicas) / nodes.size();
 
-        //so take this minimum amount of partitions from each node
-        int minLoadToTakeFromEachNode = loadOfNewNode / (nodes.size()-1);
-        //and take from this amount of nodes 1 extra partition wrt the minLoadToTakeFromEachNode
-        int nodesToTakeExtraLoadFrom = loadOfNewNode % (nodes.size()-1);
-        //now extract the number of normal-loaded nodes from which take some extra load anyway, to
-        //balance everything at the end
-        int numOfNormalNodesToTakeExtraLoadFrom = Math.max(nodesToTakeExtraLoadFrom - numOfExtraLoadedNodes, 0);
-        int numOfExtraLoadedNodesToTakeLoadFrom = nodesToTakeExtraLoadFrom - numOfNormalNodesToTakeExtraLoadFrom;
+        //a list of nodes, sorted by load descending, excluding the newNode
+        List<ActorRef> nodesByLoad = new ArrayList<>(nodes);
+        nodesByLoad.remove(newNode);
+        nodesByLoad.sort(Comparator.comparingInt(this::loadOfNode).reversed());
 
-        int currMaxLoad = currentMaxLoad();
-        int currMinLoad = currentMinLoadExcluding(newNode);
+        int currMaxLoad;
+        boolean hasTakenSomeLoadThisCycle = true;
 
-        for (ActorRef node : nodes) {
-            if(node == newNode)
-                continue;
-            //if is an extra-loaded node and there are still nodes from this category from which newNode
-            //has to take an extra partition, or if is a normal node and there are still nodes from this
-            // category from which newNode has to take an extra partition, take from it the minLoad + 1 extra
-            if(numOfExtraLoadedNodesToTakeLoadFrom > 0 && loadOfNode(node) == currMaxLoad)
-            {
-                moveLoadFromNodeToNode(node, newNode, minLoadToTakeFromEachNode + 1);
-                numOfExtraLoadedNodesToTakeLoadFrom--;
-            } else if(numOfNormalNodesToTakeExtraLoadFrom > 0 && loadOfNode(node) == currMinLoad) {
-                moveLoadFromNodeToNode(node, newNode, minLoadToTakeFromEachNode + 1);
-                numOfNormalNodesToTakeExtraLoadFrom--;
-            }
-            //else is a normal case, so take load for the minimum general amount from everyone
-            else {
-                moveLoadFromNodeToNode(node, newNode, minLoadToTakeFromEachNode);
+        //put on the new node all the load it can get without loading itself more than expected
+        while (hasTakenSomeLoadThisCycle && loadOfNode(newNode) < expectedLoadOfNewNode) {
+            //resort nodes, recalculate maxLoad
+            nodesByLoad.sort(Comparator.comparingInt(this::loadOfNode).reversed());
+            currMaxLoad = currentMaxLoad();
+            hasTakenSomeLoadThisCycle = false;
+            //take 1 from every node with max load, stop if reaching the load of the new node
+            for (int i = 0; i < nodesByLoad.size() && loadOfNode(newNode) < expectedLoadOfNewNode; i++) {
+                //if we reach nodes with less than max load then stop the cycle
+                if(loadOfNode(nodesByLoad.get(i)) != currMaxLoad && hasTakenSomeLoadThisCycle)
+                    break;
+                //move load from curr node to new node, in the expected amount or less if reaching the expectedLoad
+                int gainedLoad = moveLoadFromNodeToNode(nodesByLoad.get(i), newNode, 1);
+                if(gainedLoad > 0)
+                    hasTakenSomeLoadThisCycle = true;
+
             }
         }
     }
 
 
+
     /**
-     * Warning: this method per se violates the assumption that each node has same load, at most with difference 1.
+     *
      * It must be used over all the nodes present in the manager consistently wrt to a node added or failing
      * @param giverNode the node which gives the load to the other
      * @param takerNode the node which takes the load from the other
-     * @param amount how much load to take/give. Must be smaller/equal than the partitions assigned to the giver node
+     * @param amount how much load to take/give. Must be positive smaller/equal than the partitions assigned to the giver node
+     * @return the amount of load moved. Can go from 0 if no partition can be moved from one node to the other, up to the given amount
      */
-    private void moveLoadFromNodeToNode(ActorRef giverNode, ActorRef takerNode, int amount) {
+    private int moveLoadFromNodeToNode(ActorRef giverNode, ActorRef takerNode, int amount) {
+        if(amount <= 0)
+            return 0;
+        int originalAmount = amount;
         List<Integer> partitionsOfGiver = partitionsOfNode.get(giverNode);
         List<Integer> partitionsOfTaker = partitionsOfNode.get(takerNode);
         Logger.std.dlog(giverNode.path().name() + " giving " +amount + " partitions to " +takerNode.path().name());
@@ -191,8 +183,9 @@ public class PartitionManager {
         }
 
         if(amount!= 0) {
-            Logger.std.dlog("amount remained! -> " + amount);
+            Logger.std.log(Logger.LogLevel.WARNING, "Some amount of load remained while! -> " + amount);
         }
+        return originalAmount-amount;
     }
 
 
@@ -254,6 +247,21 @@ public class PartitionManager {
             sb.append("P:" + i + " - " + nodesOfPartition.get(i)+ "\n");
         }
         return sb.toString();
+    }
+
+    public String toStringListOfNodes() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < nodes.size(); i++) {
+            sb.append(nodes.get(i).path().name() + " (" + loadOfNode(nodes.get(i)) + "), ");
+            if(i%4 == 3)
+                sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+
+    public void sortNodesByLoad() {
+        nodes.sort(Comparator.comparingInt(this::loadOfNode).reversed());
     }
 
 }
