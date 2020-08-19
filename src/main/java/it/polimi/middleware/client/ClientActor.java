@@ -56,12 +56,14 @@ public class ClientActor extends AbstractActor {
 
 
     private void onGetMsg(GetMsg msg) {
+        Logger.std.dlog("sending get message to " + accessNodes.get(i).path().name());
         msg.setClientID(clientID);
         accessNodes.get(i).tell(msg, self());
         roundRobin();
     }
 
     private void onPutMsg(PutMsg msg) {
+        Logger.std.dlog("sending put message to " + accessNodes.get(i).path().name());
         msg.setClientID(clientID);
         accessNodes.get(i).tell(msg, self());
         roundRobin();

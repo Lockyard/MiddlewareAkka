@@ -127,7 +127,7 @@ public class StoreManager extends AbstractActor {
 
             ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
             //create the new storeNode
-            ActorRef newNode = as.actorOf(StoreNode.props(hashSpacePartition, j, j==0, self()), "localStoreNode_"+j);
+            ActorRef newNode = as.actorOf(StoreNode.props(self(), timeout.getSeconds()), "localStoreNode_"+j);
             storeNodes.add(newNode);
             partitionManager.addNode(newNode);
         }
@@ -139,11 +139,11 @@ public class StoreManager extends AbstractActor {
      * This assumes that the storeNodesLists List is fully initialized and no node is yet operative.
      */
     private void sendSetupMessagesToStoreNodes() {
-        //TODO actual message, this is a mockup
-        for (ActorRef node :
-                storeNodes) {
-            node.tell(new ActivateNodeMsg(), self());
+        Logger.std.dlog("Sending setup messages to nodes. nodesOfPartitionList is:\n" + partitionManager.getNodesOfPartitionList());
+        for (ActorRef node : storeNodes) {
+            node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), false), self());
         }
+        Logger.std.dlog("Setup messages sent");
     }
 
 
@@ -168,14 +168,9 @@ public class StoreManager extends AbstractActor {
             storeNodes.sort(Comparator.comparingInt(this::clientLoadOfNode));
 
             for (int i = 0; i < assignedNodes; i++) {
-                Logger.std.dlog("Telling " +storeNodes.get(i).path().name() + " to assign client " + sender().path().name());
-                storeNodes.get(i).tell(new ClientAssignMsg(uid, assignedNodes, sender()), self());
-                incrementClientLoadTo(storeNodes.get(i));
-                /*//
-                CompletableFuture<Object> future = ask(storeNodes.get(i), new ClientAssignMsg(uid, assignedNodes, sender()), timeout).toCompletableFuture();
+                CompletableFuture<Object> future = ask(storeNodes.get(i), new ClientAssignMsg(uid, assignedNodes), timeout).toCompletableFuture();
                 incrementClientLoadTo(storeNodes.get(i));
                 pipe(future, getContext().dispatcher()).to(sender());
-                //*/
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -4,57 +4,108 @@ package it.polimi.middleware.server.actors;
 import akka.actor.AbstractActorWithStash;
 import akka.actor.ActorRef;
 import akka.actor.Props;
-import akka.pattern.Patterns;
-import akka.util.Timeout;
 import it.polimi.middleware.messages.*;
 import it.polimi.middleware.server.messages.*;
 import it.polimi.middleware.server.store.ValueData;
 import it.polimi.middleware.util.Logger;
 import scala.Option;
-import scala.concurrent.Await;
-import scala.concurrent.Future;
+
+import static akka.pattern.Patterns.ask;
+import static akka.pattern.Patterns.pipe;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.concurrent.TimeoutException;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 
 //TODO qol general for this class is non-block some message such as validData and DataValidationRequest/Reply
 public class StoreNode extends AbstractActorWithStash {
 
+    private Duration timeout;
     /**
-     * In seconds, the timeout for when requesting data to other StoreNodes. Default is 3
+     * In seconds, the timeout for when requesting data to other StoreNodes. Default is 5
      */
-    private static long TIMEOUT_ON_REQUEST_DATA = 3;
+    private static long TIMEOUT_ON_REQUEST_DATA = 5;
 
-    private final int hashSpacePartition, nodeNumber;
+    private int hashSpacePartition;
 
-    //reference to other actors useful
-    private boolean isLeader, isLast;
-    private ActorRef nextReplica, previousReplica, storeManager;
+    private ActorRef storeManager;
 
+    /**
+     * The main data contained inside this StoreNode
+     */
     private HashMap<String, ValueData> data;
 
+    /**
+     * This "map" states, for each partition, which nodes have data of that partition, and in which order
+     * they are authoritative. Hence is possible to get who's leader and who is the last to be updated
+     * Every node has the same map, which is updated uniquely by the store manager on events such
+     * new nodes up and nodes down. Index of list is the "key", indicating the partition
+     */
+    private List<List<ActorRef>> nodesOfPartition;
+
+    /**
+     * Set of all the storeNodes working in the store system now
+     */
+    private Set<ActorRef> storeNodesSet;
+
+    /**
+     * Client Operation ID map. Key is the client ID, as value for each client there is a map
+     * whose key are integer representing a partition, and for each partition as value there is the
+     * logical ID of the last operation done by that client on that partition.
+     */
+    private HashMap<Long, HashMap<Integer, Integer>> clientOpIDMap;
+
+    /**
+     * The set of the partitions assigned to this node
+     */
+    private Set<Integer> assignedPartitions;
+
+    /**
+     * the set of all assigned clients to this node
+     */
+    private Set<Long> assignedClientIDs;
+
+    //round robin index
+    private int rrIndex=0;
 
 
     /**
      * New StoreNode with the specified hashPartition.
-     * @param hashSpacePartition indicates in how many parts the hashSpace was divided
-     * @param nodeNumber identifies the node among the one with the same copies of data
-     * @param isLeader reference to every node's manager, the store manager
      * @param storeManager the storeManager ActorRef, to which they refer
      */
-    public StoreNode(int hashSpacePartition, int nodeNumber, boolean isLeader, ActorRef storeManager) {
-        this.hashSpacePartition = hashSpacePartition;
-        this.nodeNumber = nodeNumber;
-        this.isLeader = isLeader;
+    public StoreNode(ActorRef storeManager) {
         this.storeManager = storeManager;
 
-        nextReplica = ActorRef.noSender();
-        previousReplica = ActorRef.noSender();
+        data = new HashMap<>();
+        nodesOfPartition = new ArrayList<>();
+        clientOpIDMap = new HashMap<>();
+        assignedPartitions = new HashSet<>();
+        storeNodesSet = new HashSet<>();
+        assignedClientIDs = new HashSet<>();
+
+        timeout = Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA);
+    }
+
+    /**
+     * New StoreNode with the specified hashPartition.
+     * @param storeManager the storeManager ActorRef, to which they refer
+     * @param timeoutSeconds the timeout in seconds when asking to other nodes
+     */
+    public StoreNode(ActorRef storeManager, long timeoutSeconds) {
+        this.storeManager = storeManager;
 
         data = new HashMap<>();
+        nodesOfPartition = new ArrayList<>();
+        clientOpIDMap = new HashMap<>();
+        assignedPartitions = new HashSet<>();
+        storeNodesSet = new HashSet<>();
+        assignedClientIDs = new HashSet<>();
+
+        timeout = Duration.ofSeconds(timeoutSeconds);
     }
+
+
 
     @Override
     public Receive createReceive() {
@@ -81,7 +132,6 @@ public class StoreNode extends AbstractActorWithStash {
         return receiveBuilder()
                 .match(GetMsg.class, this::onGetMessage)
                 .match(PutMsg.class, this::onPutMessage)
-                .match(DataValidationMsg.class, this::onDataValidationMessage)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .matchAny(this::onUnknownMessage)
                 .build();
@@ -89,63 +139,83 @@ public class StoreNode extends AbstractActorWithStash {
 
 
     /**
-     * Update the store node with the update message, then this node becomes active
+     * Update the store node with the update message
      * @param msg the update message
      */
     private void onUpdateStoreNodeStatusMessage(UpdateStoreNodeStatusMsg msg) {
-        this.isLeader = msg.isLeader();
-        this.isLast = msg.isLast();
-        this.previousReplica = msg.getPreviousReplica();
-        this.nextReplica = msg.getNextReplica();
-        if(msg.requestDataFromLeader()) {
-            //TODO send a message to the leader replica asking for a copy of its data
-            // msg.getLeaderReplica().tell(...);
-        }
-        Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] updated status. Leader: " + isLeader + ", last: " +isLast +
-                ", previousReplica: " + previousReplica + ", nextReplica: " +nextReplica );
+        //TODO
 
-        getContext().become(active());
-        unstashAll();
     }
 
 
     private void onActivateNodeMessage(ActivateNodeMsg msg) {
+        Logger.std.dlog(self().path().name() + " received as nodesOfPartitions: " + msg.getNodesOfPartition()
+                + "\nsize: " +msg.getNodesOfPartition().size());
+        hashSpacePartition = msg.getNodesOfPartition().size();
+        nodesOfPartition = msg.getNodesOfPartition();
+
+        //add all the actors in the lists to the set, and all the partitions assigned to this node
+        for (int i = 0; i < nodesOfPartition.size(); i++) {
+            storeNodesSet.addAll(nodesOfPartition.get(i));
+            if(nodesOfPartition.get(i).contains(self()))
+                assignedPartitions.add(i);
+        }
+        Logger.std.dlog(self().path().name() + " received partitions: " + assignedPartitions);
+        Logger.std.dlog("Final hashmap for node " +self().path().name()+":\n" + toStringNodesOfPartition());
+
+
+        if(msg.mustRequestData()) {
+            //TODO
+        }
+
         getContext().become(active());
         unstashAll();
     }
 
 
     /**
-     * On a get message a store node checks if has a valid ValueData. If yes, returns it.
-     * If not, ask to the previous replica in the hierarchical-list to have a valid one. On return of a valid
-     * valueData also update the content of the ValueData in its memory.
-     * @param getMsg the get message
+     * Get Messages comes from clients. check if id corresponds to one assigned to this node, and if ok get the datum.
+     * If datum is not here or there are consistency issues, ask to other nodes
+     * @param getMsg the get message from the client
      */
     private void onGetMessage(GetMsg getMsg) {
+        Logger.std.dlog(self().path().name() + " received get message with key " + getMsg.getKey() +
+                " from " +sender().path().name());
+        //check client id or if request comes from another node in the system
+        if(assignedClientIDs.contains(getMsg.getClientID()) || storeNodesSet.contains(sender())) {
+            int partition = getMsg.getKey().hashCode() % hashSpacePartition;
+            //if datum is assigned to this replica
+            if(assignedPartitions.contains(partition)) {
+                //if there is a value, get it
+                if(data.containsKey(getMsg.getKey())) {
+                    ValueData vd = data.get(getMsg.getKey());
+                    sender().tell(new ReplyGetMsg(getMsg.getKey(), vd.getValue()), self());
+                }
+                //there is no datum, return null
+                else {
+                    sender().tell(new ReplyGetMsg(getMsg.getKey(), null), self());
+                }
+            }
+            // if datum is  not assigned to this replica, ask to another replica to which has it assigned
+            else {
+                List<ActorRef> nodesOfThisPartition = nodesOfPartition.get(partition);
+                roundRobin(nodesOfThisPartition.size());
+                //ask and pipe the answer
+                CompletableFuture<Object> future = ask(nodesOfThisPartition.get(rrIndex), getMsg, timeout).toCompletableFuture();
+                pipe(future, getContext().dispatcher()).to(sender());
+            }
+        }
+        //
+        else {
+            sender().tell(new ReplyErrorMsg("The client requesting the operation has not authorization" +
+                    " on this node"), self());
+        }
         //if there is some datum is in memory at the specified key, get it
         if(data.containsKey(getMsg.getKey())) {
             ValueData vd = data.get(getMsg.getKey());
-            //if it's ok wrt newness, reply and don't request the datum to the previous replica
-            if(getMsg.getNewness() == vd.getNewness()) {
-                sender().tell(new ReplyGetMsg(getMsg.getKey(), vd.getValue()), self());
-            }
-            //if message's newness is higher, this node has yet to be updated on that datum. Ask the datum to the next replica
-            else if (getMsg.getNewness() > vd.getNewness()){
-                askToPreviousReplicaForData(getMsg.getKey(), getMsg.getNewness());
-            } //if message's newness is less than this node datum's newness, check the history of last writes and recover the
-            //requested value
-            else {
-                checkHistoryForMessage(getMsg.getKey(), getMsg.getNewness());
-            }
         }
-        //if no datum is in, if the newness requested is the default one, return null content. otherwise, ask it to
-        //the previous replica
         else {
-            if(getMsg.getNewness() == ValueData.DEFAULT_NEWNESS) {
-                sender().tell(new ReplyGetMsg(getMsg.getKey(), null), self());
-            } else {
-                askToPreviousReplicaForData(getMsg.getKey(), getMsg.getNewness());
-            }
+
         }
     }
 
@@ -159,43 +229,66 @@ public class StoreNode extends AbstractActorWithStash {
      * @param putMsg
      */
     private void onPutMessage(PutMsg putMsg) {
-        //update the old valueData with the one in the put
-        if(data.containsKey(putMsg.getKey())) {
-            data.get(putMsg.getKey()).updateIfNewer(putMsg.getVal(), putMsg.getNewness());
-            Logger.std.log(Logger.LogLevel.DEBUG, "> [" + self().path().name() + "]: updated " + putMsg);
-        } else {
-            data.put(putMsg.getKey(), new ValueData(putMsg.getVal(), putMsg.getNewness()));
-            Logger.std.log(Logger.LogLevel.DEBUG, "> [" + self().path().name() + "]: stored " + putMsg);
-        }
+        Logger.std.dlog(self().path().name() + ": put message received with key: " + putMsg.getKey() + "" +
+                ", val: " +putMsg.getVal() + " from " +sender().path().name());
 
-        //if the putMessage allows this copy to reply (since already K-writes of the data occurred), or if this
-        //is the last replica, then reply
-        if (putMsg.shouldReplyAfterThisWrite() || (isLast && putMsg.requiresReply())) {
-            sender().tell(new ReplyPutMsg(putMsg.getKey(), putMsg.getVal(), true), self());
-        }
+        //if is a legit request: from client assigned to this node or another node of the system
+        if(assignedClientIDs.contains(putMsg.getClientID()) || storeNodesSet.contains(sender())) {
 
-        //if is not the last in the hierarchy, forward to next replica
-        if(!isLast) {
-            nextReplica.forward(putMsg, context());
-            Logger.std.log(Logger.LogLevel.VERBOSE, "> ["+self().path().name() + "]:Forwarded putMsg to next replica");
+            int partition = putMsg.getKey().hashCode() % hashSpacePartition;
+            List<ActorRef> nodesOfKey = nodesOfPartition.get(partition);
+
+            //if this node have assigned the partition of that key
+            if(nodesOfKey.contains(self())) {
+
+                //if this is the leader of the partition of that datum, write and propagate
+                if(nodesOfKey.get(0).equals(self())) {
+                    insertData(putMsg);
+                    if(nodesOfKey.size() >= 2) {
+                        CompletableFuture<Object> future = ask(nodesOfKey.get(1), putMsg, timeout.multipliedBy(nodesOfKey.size()-1)).toCompletableFuture();
+                        pipe(future, getContext().dispatcher()).to(sender());
+                    }
+                }
+
+                //if is not leader but the put comes from the leader, then update data, and forward if there are
+                //replicas after this one, or reply to the leader if is the last replica
+                else if(nodesOfKey.get(0).equals(sender())) {
+                    Logger.std.dlog(self().path().name() + "is not leader, put request from leader");
+                    //update data
+                    insertData(putMsg);
+
+                    //if is last node, reply to the leader
+                    if(nodesOfKey.get(nodesOfKey.size()-1).equals(self())) {
+                        sender().tell(new ReplyPutMsg(putMsg.getKey(), putMsg.getVal(), true), self());
+                    } //if is not the last node, then forward the leader's request to the next
+                    else {
+                        nodesOfKey.get(nodesOfKey.indexOf(self())+1).forward(putMsg, getContext());
+                    }
+
+                }
+                //then this is a client access point but this node has no leadership on that key. ask to the leader
+                else {
+                    CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
+                    pipe(future, getContext().dispatcher()).to(sender());
+                }
+            }
+            //if the node doesn't have this key assigned, ask to the leader of the key to perform a put
+             else {
+                CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
+                pipe(future, getContext().dispatcher()).to(sender());
+            }
+        }
+        //else an actor with no rights tried to do a put on this node. answer error
+        else {
+            sender().tell(new ReplyErrorMsg("The client requesting the operation has not authorization" +
+                    " on this node"), self());
         }
         
     }
 
-    /**
-     * The replica listen only for its previous replica.
-     * If that is the sender, update and validate the data it sent
-     * @param dvMsg the message containing the ValueData to update
-     */
-    private void onDataValidationMessage(DataValidationMsg dvMsg) {
-
-    }
-
     private void onClientAssignMessage(ClientAssignMsg msg) {
-        //TODO add client id to list of served clients
-
-        //sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
-        msg.getClientRef().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
+        assignedClientIDs.add(msg.getClientID());
+        sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
     }
 
 
@@ -207,51 +300,46 @@ public class StoreNode extends AbstractActorWithStash {
 
 
 
-    public static Props props(int hashSpacePartition, int nodeNumber, boolean isLeader, ActorRef storeManager) {
-        return Props.create(StoreNode.class, hashSpacePartition, nodeNumber, isLeader, storeManager);
+    public static Props props(ActorRef storeManager, long timeoutSeconds) {
+        return Props.create(StoreNode.class, storeManager, timeoutSeconds);
     }
 
 
     ///Other private methods
 
-    /**
-     * Ask for a specific datum, given the key, to the previous replica.
-     * Updates the datum in memory if newer and reply to the user if consistent wrt newness, otherwise will proceed
-     * to recover the old datum.
-     * @param key
-     */
-    private void askToPreviousReplicaForData(String key, long newness) {
-        Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] requesting value with newness " +newness + " @K:" +key);
-        Timeout timeout = Timeout.create(Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA));
-        Future<Object> dataReplyFuture = Patterns.ask(previousReplica,
-                new ValidDataRequestMsg(key), timeout);
+    private void insertData(PutMsg putMsg) {
+        data.put(putMsg.getKey(), new ValueData(putMsg.getVal()));
+    }
 
-        try {
-            //TODO qol is avoid blocking and implement e.g. a pool of futures and a thread which checks it
-            //TODO and clean it every [timeout] seconds. CompletableFuture seems to work except
-            //TODO ask().toCompletableFuture() doesn't exist for some reason as method, although is in the doc
-
-            ValueData newVD = (ValueData)Await.result(dataReplyFuture, timeout.duration());
-
-            //it could still be possible, when it won't await, that the received datum is now older than one passed in the meanwhile
-            data.get(key).updateIfNewer(newVD);
-
-            if(newness == newVD.getNewness()) {
-                sender().tell(new ReplyGetMsg(key, newVD.getValue()), self());
+    private String toStringNodesOfPartition() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < nodesOfPartition.size(); i++) {
+            sb.append("P:" + i + " - [");
+            for (int j = 0; j < nodesOfPartition.get(i).size(); j++) {
+                sb.append(nodesOfPartition.get(i).get(j).path().name());
+                if(j != nodesOfPartition.get(i).size()-1)
+                    sb.append(", ");
+                else
+                    sb.append(("]\n"));
             }
-            //if even now newness is not coherent, the value is lost
-            else {
-
-            }
-
-
-        } catch (InterruptedException | TimeoutException | ClassCastException e) {
-            e.printStackTrace();
         }
+        return sb.toString();
     }
 
     private void checkHistoryForMessage(String key, long newness) {
         //TODO implement a history which stores the last N put operations, to recover old values no more in data
+    }
+
+    /**
+     * Do a round robin in modulo mod
+     * @param mod the modulo
+     */
+    private void roundRobin(int mod) {
+        rrIndex = (rrIndex+1) % mod;
+    }
+
+    public void setTimeout(int seconds) {
+        timeout = Duration.ofSeconds(seconds);
     }
 
     ///////STATICS

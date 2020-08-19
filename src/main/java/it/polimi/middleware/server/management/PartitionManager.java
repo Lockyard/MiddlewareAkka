@@ -319,7 +319,14 @@ public class PartitionManager {
     public String toStringNodesOfPartition() {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < nodesOfPartition.size(); i++) {
-            sb.append("P:" + i + " - " + nodesOfPartition.get(i)+ "\n");
+            sb.append("P:" + i + " - [");
+            for (int j = 0; j < nodesOfPartition.get(i).size(); j++) {
+                sb.append(nodesOfPartition.get(i).get(j).path().name());
+                if(j != nodesOfPartition.get(i).size()-1)
+                    sb.append(", ");
+                else
+                    sb.append(("]\n"));
+            }
         }
         return sb.toString();
     }
@@ -369,6 +376,7 @@ public class PartitionManager {
     public List<List<ActorRef>> getNodesOfPartitionList() {
         return new ArrayList<>(nodesOfPartition);
     }
+
 
     public List<ActorRef> getListOfNodes() {
         return new ArrayList<>(nodes);
