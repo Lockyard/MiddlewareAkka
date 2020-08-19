@@ -14,7 +14,7 @@ public class ReplyGreetingMsg implements Serializable {
     /**
      * Useful for Java when serializing class. Better to assign a UID to the class than making it assigned by Java
      */
-    private static final long serialVersionUID = 88124019300123242L;
+    private static final long serialVersionUID = 77124090000123305L;
 
     private final long clientID;
 

@@ -8,7 +8,7 @@ import java.io.Serializable;
  */
 public class DataValidationMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123255L;
+    private static final long serialVersionUID = 88124090000123202L;
 
     private final String key, value;
     private final int newness;

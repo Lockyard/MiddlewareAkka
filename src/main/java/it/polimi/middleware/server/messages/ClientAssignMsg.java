@@ -11,12 +11,10 @@ public class ClientAssignMsg extends ServerMessage {
 
     private final long clientID;
     private final int nodesAssigned;
-    private final ActorRef clientRef;
 
-    public ClientAssignMsg(long clientID, int nodesAssigned, ActorRef clientRef) {
+    public ClientAssignMsg(long clientID, int nodesAssigned) {
         this.clientID = clientID;
         this.nodesAssigned = nodesAssigned;
-        this.clientRef = clientRef;
     }
 
     public long getClientID() {
@@ -26,9 +24,5 @@ public class ClientAssignMsg extends ServerMessage {
 
     public int getNodesAssigned() {
         return nodesAssigned;
-    }
-
-    public ActorRef getClientRef() {
-        return clientRef;
     }
 }

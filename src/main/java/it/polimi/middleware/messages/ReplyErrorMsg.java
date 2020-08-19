@@ -5,7 +5,7 @@ package it.polimi.middleware.messages;
  */
 public class ReplyErrorMsg extends ServiceMessage {
 
-    private static final long serialVersionUID = 41444424242444L;
+    private static final long serialVersionUID = 77124090000123199L;
 
     private final String description;
 
