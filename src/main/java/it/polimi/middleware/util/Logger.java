@@ -5,7 +5,7 @@ public class Logger {
     public static final Logger std = new Logger();
 
     public enum LogLevel {
-        VERBOSE(0), DEBUG(1), WARNING(2), ERROR(3), NONE(4);
+        VERBOSE(0), DEBUG(1), INFO(2), WARNING(3), ERROR(4), NONE(5);
         private int level;
         private LogLevel(int level) {
             this.level = level;
@@ -41,9 +41,17 @@ public class Logger {
     /**
      * Log in debug level something
      */
-    public void dlog(String logMessage) {
+    public void dlog(String debugLogMessage) {
         if(this.logLevel.getLevel() <= LogLevel.DEBUG.level)
-            System.out.println(logMessage);
+            System.out.println(debugLogMessage);
+    }
+
+    /**
+     * log in info level something with "[INFO] " preponed
+     */
+    public void ilog(String infoLogMessage) {
+        if(this.logLevel.getLevel() <= LogLevel.INFO.level)
+            System.out.println("[INFO] " + infoLogMessage);
     }
 
 

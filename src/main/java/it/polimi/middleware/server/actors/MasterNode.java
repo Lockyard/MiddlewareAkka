@@ -7,6 +7,9 @@ import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
 import it.polimi.middleware.messages.GreetingMsg;
 import it.polimi.middleware.messages.ServiceMessage;
+import it.polimi.middleware.server.messages.StartSystemMsg;
+import it.polimi.middleware.server.messages.StartSystemReplyMsg;
+import it.polimi.middleware.util.Logger;
 
 public class MasterNode extends AbstractActor {
     private ActorRef storeManager;
@@ -31,12 +34,27 @@ public class MasterNode extends AbstractActor {
     public Receive createReceive() {
         return receiveBuilder()
                 //forward service messages to the storeManager
-                .match(ServiceMessage.class, msg -> storeManager.forward(msg, getContext()))
+                .match(GreetingMsg.class, msg -> storeManager.forward(msg, getContext()))
+                .match(StartSystemMsg.class, msg -> storeManager.tell(msg, self()))
+                .match(StartSystemReplyMsg.class, this::onStartSystemReplyMsg)
                 .build();
     }
+
+    private void onStartSystemReplyMsg(StartSystemReplyMsg msg) {
+        if(msg.isSuccessful()) {
+            Logger.std.ilog("System started successfully!");
+        } else {
+            Logger.std.ilog("System couldn't start! >> " + msg.getDescription());
+        }
+    }
+
+
+
 
     public static Props props() {
         return Props.create(MasterNode.class);
     }
+
+
 
 }

@@ -1,10 +1,13 @@
 package it.polimi.middleware.server;
 
+import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigValueFactory;
 import it.polimi.middleware.server.actors.MasterNode;
+import it.polimi.middleware.server.messages.StartSystemMsg;
+import it.polimi.middleware.util.Logger;
 
 import java.util.Collections;
 import java.util.Scanner;
@@ -24,14 +27,26 @@ public class ServerApp {
                     .withValue("akka.cluster.roles", ConfigValueFactory.fromIterable(Collections.singletonList("master")));
 
             final ActorSystem sys = ActorSystem.create("ServerClusterSystem", conf);
-            sys.actorOf(MasterNode.props(), "MasterNode");
+            ActorRef masterNode = sys.actorOf(MasterNode.props(), "MasterNode");
 
             //simple loop to handle basic commands.
-            System.out.println("Server started, enter 'quit' to terminate");
+            System.out.println("Server started but store is not up by default.\n" +
+                    "Enter 'help', or 'h' to get a command list, 'quit' to exit.");
             Scanner s = new Scanner(System.in);
             String input = "";
             while(!input.equalsIgnoreCase("quit")) {
                 input = s.nextLine();
+                //check commands
+                if(input.equalsIgnoreCase("start") || input.equalsIgnoreCase("s")) {
+                    masterNode.tell(new StartSystemMsg(false), ActorRef.noSender());
+                } else if(input.equalsIgnoreCase("fstart") || input.equalsIgnoreCase("fs")) {
+                    masterNode.tell(new StartSystemMsg(true), ActorRef.noSender());
+                }  else if(input.equalsIgnoreCase("help") || input.equalsIgnoreCase("h")) {
+                    Logger.std.ilog("'start' or 's' -> try start the server if there are enough nodes\n" +
+                            "'fstart' or 'fs' -> force the local creation of enough nodes to start and start the server\n" +
+                            //"'addnode' or 'an' -> add a new node locally" +
+                            "'quit' -> terminate server");
+                }
             }
 
             //quit command entered, quit server

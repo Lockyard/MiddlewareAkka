@@ -6,13 +6,8 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.pattern.Patterns;
 import akka.util.Timeout;
-import it.polimi.middleware.messages.GetMsg;
-import it.polimi.middleware.messages.PutMsg;
-import it.polimi.middleware.messages.ReplyGetMsg;
-import it.polimi.middleware.messages.ReplyPutMsg;
-import it.polimi.middleware.server.messages.DataValidationMsg;
-import it.polimi.middleware.server.messages.UpdateStoreNodeStatusMsg;
-import it.polimi.middleware.server.messages.ValidDataRequestMsg;
+import it.polimi.middleware.messages.*;
+import it.polimi.middleware.server.messages.*;
 import it.polimi.middleware.server.store.ValueData;
 import it.polimi.middleware.util.Logger;
 import scala.Option;
@@ -32,7 +27,7 @@ public class StoreNode extends AbstractActorWithStash {
      */
     private static long TIMEOUT_ON_REQUEST_DATA = 3;
 
-    private final int hashSpacePartition, partitionNumber, nodeNumber;
+    private final int hashSpacePartition, nodeNumber;
 
     //reference to other actors useful
     private boolean isLeader, isLast;
@@ -45,14 +40,12 @@ public class StoreNode extends AbstractActorWithStash {
     /**
      * New StoreNode with the specified hashPartition.
      * @param hashSpacePartition indicates in how many parts the hashSpace was divided
-     * @param partitionNumber indicates which part of the divided hashSpace is assigned to this node
      * @param nodeNumber identifies the node among the one with the same copies of data
      * @param isLeader reference to every node's manager, the store manager
      * @param storeManager the storeManager ActorRef, to which they refer
      */
-    public StoreNode(int hashSpacePartition, int partitionNumber, int nodeNumber, boolean isLeader, ActorRef storeManager) {
+    public StoreNode(int hashSpacePartition, int nodeNumber, boolean isLeader, ActorRef storeManager) {
         this.hashSpacePartition = hashSpacePartition;
-        this.partitionNumber = partitionNumber;
         this.nodeNumber = nodeNumber;
         this.isLeader = isLeader;
         this.storeManager = storeManager;
@@ -79,6 +72,7 @@ public class StoreNode extends AbstractActorWithStash {
     private Receive inactive() {
         return receiveBuilder()
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
+                .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
                 .matchAny(msg -> stash())
                 .build();
     }
@@ -88,6 +82,7 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(GetMsg.class, this::onGetMessage)
                 .match(PutMsg.class, this::onPutMessage)
                 .match(DataValidationMsg.class, this::onDataValidationMessage)
+                .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .matchAny(this::onUnknownMessage)
                 .build();
     }
@@ -109,6 +104,12 @@ public class StoreNode extends AbstractActorWithStash {
         Logger.std.log(Logger.LogLevel.VERBOSE, "["+self().path().name()+"] updated status. Leader: " + isLeader + ", last: " +isLast +
                 ", previousReplica: " + previousReplica + ", nextReplica: " +nextReplica );
 
+        getContext().become(active());
+        unstashAll();
+    }
+
+
+    private void onActivateNodeMessage(ActivateNodeMsg msg) {
         getContext().become(active());
         unstashAll();
     }
@@ -190,6 +191,13 @@ public class StoreNode extends AbstractActorWithStash {
 
     }
 
+    private void onClientAssignMessage(ClientAssignMsg msg) {
+        //TODO add client id to list of served clients
+
+        //sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
+        msg.getClientRef().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
+    }
+
 
     private void onUnknownMessage(Object unknownMsg) {
         //simply log the unknown message
@@ -199,8 +207,8 @@ public class StoreNode extends AbstractActorWithStash {
 
 
 
-    public static Props props(int hashSpacePartition, int partitionNumber, int nodeNumber, boolean isLeader, ActorRef storeManager) {
-        return Props.create(StoreNode.class, hashSpacePartition, partitionNumber, nodeNumber, isLeader, storeManager);
+    public static Props props(int hashSpacePartition, int nodeNumber, boolean isLeader, ActorRef storeManager) {
+        return Props.create(StoreNode.class, hashSpacePartition, nodeNumber, isLeader, storeManager);
     }
 
 

@@ -13,6 +13,8 @@ public class PutMsg extends ServiceMessage implements Serializable {
 
     private final String key;
     private final String val;
+
+    private long clientID = 0;
     /**
      * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
      */
@@ -71,6 +73,8 @@ public class PutMsg extends ServiceMessage implements Serializable {
         }
     }
 
+
+
     /**
      * Ask if this put message has yet to be replied to
      * @return true if hasn't yet told to anyone to reply to this message
@@ -85,6 +89,14 @@ public class PutMsg extends ServiceMessage implements Serializable {
 
     public final String getVal() {
         return val;
+    }
+
+    public void setClientID(long clientID) {
+        this.clientID = clientID;
+    }
+
+    public final long getClientID() {
+        return clientID;
     }
 
     public void setNewness(long newness) {

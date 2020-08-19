@@ -53,6 +53,7 @@ public class PartitionManager {
         }
         partitionsOfNode = new HashMap<>(partitions * nReplicas);
         nodes = new ArrayList<>();
+        Logger.std.dlog("creating pm, running is false");
         running = false;
     }
 
@@ -98,9 +99,9 @@ public class PartitionManager {
             }
         }
 
+        Logger.std.dlog("pm, running is true");
         running = true;
 
-        Logger.std.dlog("left out nodes = " + leftOutNodes);
         //now introduce the new nodes like they were added a running time
         for (int i = nodes.size() - leftOutNodes; i < nodes.size(); i++) {
             giveLoadToNewNode(nodes.get(i));
@@ -124,6 +125,17 @@ public class PartitionManager {
     }
 
     private void giveLoadToNewNode(ActorRef newNode) {
+        //if the nodes are now just sufficient to cover all the replicas or less, each new node added must simply get all
+        //the partitions it can have
+        if(nodes.size() <= nReplicas) {
+            for (int i = 0; i < partitions; i++) {
+                partitionsOfNode.get(newNode).add(i);
+                nodesOfPartition.get(i).add(newNode);
+            }
+            return;
+        }//otherwise we are in a normal case were there are enough nodes
+
+
         //the load of the node that will be added, in terms of n of partitions assigned
         int expectedLoadOfNewNode = (partitions * nReplicas) / nodes.size();
 
@@ -153,6 +165,67 @@ public class PartitionManager {
 
             }
         }
+    }
+
+
+    /**
+     * Remove a node from this system
+     * @param removedNode the removed node, if present
+     * @throws NotEnoughNodesException if removing this node will result in impossible reassignment of loads. This happens if
+     * the number of remaining nodes is less than the minimum number of replicas wanted by the system.
+     */
+    public void removeNode(ActorRef removedNode) throws NotEnoughNodesException {
+        if(!nodes.contains(removedNode))
+            return;
+        nodes.remove(removedNode);
+
+        //make a list of nodes which can receive some partitions from the fallen node, meaning they have not already
+        //all its partitions
+        List<ActorRef> availableNodes = new ArrayList<>(nodes);
+        for (ActorRef node : nodes) {
+            if(availablePartitionsToInsert(removedNode, node).size() == 0) {
+                availableNodes.remove(node);
+            }
+        }
+
+        //if there are no available nodes, then throw exception, and don't remove the node (re-add it)
+        if(availableNodes.size() == 0) {
+            throw new NotEnoughNodesException(nReplicas, nodes.size(), "The node has been removed but not enough nodes are" +
+                    " left!");
+        } //otherwise if at least one node can take some load, then it's guaranteed that the other nodes can take all its load
+
+
+        List<ActorRef> nodesToExclude = new ArrayList<>();
+        int currMinLoad;
+
+        while (loadOfNode(removedNode) > 0) {
+            //sort ascending by load the available nodes
+            availableNodes.sort(Comparator.comparingInt(this::loadOfNode));
+            currMinLoad = loadOfNode(availableNodes.get(0));
+
+            for (int i = 0; i < availableNodes.size() && loadOfNode(removedNode) > 0; i++) {
+                if (loadOfNode(availableNodes.get(i)) > currMinLoad)
+                    break;
+                int givenLoad = moveLoadFromNodeToNode(removedNode, availableNodes.get(i), 1);
+                if(givenLoad == 0)
+                    nodesToExclude.add(availableNodes.get(i));
+            }
+
+            //exclude the nodes which this round couldn't get any load from the removed node
+            if(nodesToExclude.size() > 0) {
+                for (ActorRef node : nodesToExclude)
+                    availableNodes.remove(node);
+                nodesToExclude = new ArrayList<>();
+            }
+
+            if(availableNodes.size() == 0) {
+                throw new NotEnoughNodesException(nReplicas, nodes.size(), "available nodes is empty while removing" +
+                        " a node. This should never happen theoretically");
+            }
+        }
+        //finally remove its reference from partitionsOfNode
+        partitionsOfNode.remove(removedNode);
+
     }
 
 
@@ -215,17 +288,19 @@ public class PartitionManager {
         return currMaxLoad;
     }
 
-    public int currentMinLoadExcluding(ActorRef excludedNode) {
+    public int currentMinLoad() {
         //calculate new max load
         int currMinLoad = Integer.MAX_VALUE;
         for (ActorRef node : nodes) {
-            if(node.compareTo(excludedNode) == 0)
-                continue;
             currMinLoad = Math.min(currMinLoad, loadOfNode(node));
         }
         return currMinLoad;
     }
 
+
+    public boolean isRunning() {
+        return running;
+    }
 
     public String toString() {
         return toStringNodesOfPartition();
@@ -260,8 +335,42 @@ public class PartitionManager {
     }
 
 
+    /**
+     * sort descending by workload the nodes
+     */
     public void sortNodesByLoad() {
         nodes.sort(Comparator.comparingInt(this::loadOfNode).reversed());
     }
 
+    /**
+     * @param giverNode the nodes which is giving partitions
+     * @param takerNode the nodes which is taking partitions
+     * @return how many partitions can the giverNode give to the taker node. (A node can't take the same partition twice)
+     */
+    private List<Integer> availablePartitionsToInsert(ActorRef giverNode, ActorRef takerNode) {
+        List<Integer> giverPartitions = new ArrayList<>(partitionsOfNode.get(giverNode));
+        giverPartitions.removeAll(partitionsOfNode.get(takerNode));
+        Logger.std.dlog("giver:"+giverNode.path().name() +", taker:" +takerNode.path().name()+", available: " + giverPartitions);
+        return giverPartitions;
+    }
+
+
+    /**
+     * @return a map containing all nodes inserted as keys, and their relatives assigned partitions as value
+     */
+    public HashMap<ActorRef, List<Integer>> getPartitionsOfNodeMap() {
+        return new HashMap<>(partitionsOfNode);
+    }
+
+    /**
+     * @return a list of lists whose first index is the key, which is one of the partitions.
+     * At index i there's a list containing all the ActorRefs which are assigned to the partition i
+     */
+    public List<List<ActorRef>> getNodesOfPartitionList() {
+        return new ArrayList<>(nodesOfPartition);
+    }
+
+    public List<ActorRef> getListOfNodes() {
+        return new ArrayList<>(nodes);
+    }
 }

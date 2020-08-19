@@ -14,6 +14,8 @@ public class GetMsg extends ServiceMessage implements Serializable {
 
     private final String key;
 
+    private long clientID = 0;
+
     /**
      * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
      */
@@ -25,6 +27,14 @@ public class GetMsg extends ServiceMessage implements Serializable {
 
     public final String getKey() {
         return key;
+    }
+
+    public void setClientID(long clientID) {
+        this.clientID = clientID;
+    }
+
+    public final long getClientID() {
+        return clientID;
     }
 
     public void setNewness(long newness) {

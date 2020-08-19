@@ -11,7 +11,7 @@ import akka.actor.ActorRef;
  */
 public class UpdateStoreNodeStatusMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 881240900001232320L;
+    private static final long serialVersionUID = 88124090000123202L;
 
     private final ActorRef previousReplica, nextReplica, leaderReplica;
     private final boolean isLeader, isLast, requestDataFromLeader;

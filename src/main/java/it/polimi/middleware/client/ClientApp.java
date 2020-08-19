@@ -5,16 +5,15 @@ import akka.actor.ActorSystem;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigValueFactory;
-import it.polimi.middleware.messages.GetMsg;
-import it.polimi.middleware.messages.ReplyGetMsg;
-import it.polimi.middleware.messages.ReplyPutMsg;
-import it.polimi.middleware.messages.ServiceMessage;
+import it.polimi.middleware.messages.*;
 
 import java.io.File;
 import java.util.Collections;
 import java.util.Scanner;
 
 public class ClientApp {
+
+    private static boolean isConnected = false;
 
     public static void main (String[] args) {
 
@@ -40,13 +39,21 @@ public class ClientApp {
             final String command = scanner.nextLine();
             if (command.equals("quit")) {
                 break;
-            } else {
+            } else if((command.equalsIgnoreCase("connect") || command.equalsIgnoreCase("c"))
+                    && !isConnected) {
+                client.tell(new GreetingMsg(), ActorRef.noSender());
+                //if connected, can send get and put messages
+            } else if(isConnected) {
                 //for each message parsed, send the message to the client actor
                 for (ServiceMessage sm :
                         CommandParser.parseLine(command)) {
                     client.tell(sm, ActorRef.noSender());
                 }
-
+            } else {
+                System.out.println("You are not connected yet and cannot send messages. Use:\n" +
+                        "'connect' or 'c' to connect to the store\n" +
+                        "'quit' to terminate\n" +
+                        "Once connected, you can use get and put. Type 'help' once connected to get info on usage.");
             }
         }
 
@@ -61,5 +68,10 @@ public class ClientApp {
 
     public static void receivePutReply(ReplyPutMsg msg) {
         System.out.println("Client received replyPutMSG: " + msg);
+    }
+
+    public static void receiveGreetingReplyUpdate(boolean success, String greetingReplyUpdate) {
+        isConnected = success;
+        System.out.println(greetingReplyUpdate);
     }
 }
