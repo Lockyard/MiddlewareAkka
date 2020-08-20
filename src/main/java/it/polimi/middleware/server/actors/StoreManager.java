@@ -30,6 +30,9 @@ import java.util.concurrent.CompletableFuture;
 public class StoreManager extends AbstractActor {
     private final Cluster cluster = Cluster.get(getContext().system());
 
+    //progressive number assigned to new nodes to identify themselves
+    private int nodeNumber = 0;
+
     //In how many partitions the key space is divided
     @SuppressWarnings({"FieldMayBeFinal"})
     private int hashSpacePartition;
@@ -69,7 +72,7 @@ public class StoreManager extends AbstractActor {
     // Subscribe to cluster
     @Override
     public void preStart() {
-        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class);
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberEvent.class);
     }
 
     // Re-subscribe when restart
@@ -83,10 +86,33 @@ public class StoreManager extends AbstractActor {
     public Receive createReceive() {
         return receiveBuilder()
                 .match(GreetingMsg.class, this::onGreetingMessage)
+                .match(ClusterEvent.MemberUp.class, this::onMemberUp)
+                .match(RequestActivateMsg.class, this::onRequestActivateMsg)
                 .match(StartSystemMsg.class, this::onStartSystemMessage)
                 .build();
     }
 
+
+    /**
+     * On member up, if the role is storenode, assign to him this node's reference
+     * @param memberUp
+     */
+    private void onMemberUp(ClusterEvent.MemberUp memberUp) {
+        Logger.std.dlog("Member is up: " + memberUp.member());
+        if(memberUp.member().hasRole("storenode")) {
+            Logger.std.dlog("Sending grant access to this node");
+            getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++), self());
+        }
+    }
+
+    private void onRequestActivateMsg(RequestActivateMsg msg) {
+        Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path().name());
+        partitionManager.addNode(msg.getStoreNodeRef());
+        storeNodes.add(msg.getStoreNodeRef());
+        if(partitionManager.isRunning()) {
+            msg.getStoreNodeRef().tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), false), self());
+        }
+    }
 
     private void onStartSystemMessage(StartSystemMsg msg) {
         //stop if already running
@@ -127,7 +153,8 @@ public class StoreManager extends AbstractActor {
 
             ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
             //create the new storeNode
-            ActorRef newNode = as.actorOf(StoreNode.props(self(), timeout.getSeconds()), "localStoreNode_"+j);
+            ActorRef newNode = as.actorOf(StoreNode.props(timeout.getSeconds()), "localStoreNode_"+j);
+            //TODO set the storeManager to the nodes
             storeNodes.add(newNode);
             partitionManager.addNode(newNode);
         }

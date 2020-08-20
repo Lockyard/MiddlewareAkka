@@ -18,12 +18,18 @@ import java.util.Scanner;
 public class ServerApp {
 
     public static void main (String[] args) {
-        try {
 
-            final String port = args.length == 0 ? "54333" : args[0];
+        serverMain(args);
+
+    }
+
+    private static void serverMain(String[] args) {
+        try {
+            final String port = args.length == 0 ? "9000" : args[0];
             //load config file of cluster and start MasterNode
             final Config conf = ConfigFactory.load("conf/cluster.conf")
                     .withValue("akka.remote.netty.tcp.port", ConfigValueFactory.fromAnyRef(port)) //
+                    .withValue("akka.remote.artery.canonical.port", ConfigValueFactory.fromAnyRef(port))
                     .withValue("akka.cluster.roles", ConfigValueFactory.fromIterable(Collections.singletonList("master")));
 
             final ActorSystem sys = ActorSystem.create("ServerClusterSystem", conf);
@@ -60,6 +66,6 @@ public class ServerApp {
 
             System.exit(-1);
         }
-
     }
+
 }

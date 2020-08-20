@@ -4,6 +4,8 @@ package it.polimi.middleware.server.actors;
 import akka.actor.AbstractActorWithStash;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import akka.cluster.Cluster;
+import akka.cluster.ClusterEvent;
 import it.polimi.middleware.messages.*;
 import it.polimi.middleware.server.messages.*;
 import it.polimi.middleware.server.store.ValueData;
@@ -20,6 +22,9 @@ import java.util.concurrent.CompletableFuture;
 
 //TODO qol general for this class is non-block some message such as validData and DataValidationRequest/Reply
 public class StoreNode extends AbstractActorWithStash {
+    private final Cluster cluster = Cluster.get(getContext().system());
+
+    private int nodeNumber;
 
     private Duration timeout;
     /**
@@ -89,11 +94,9 @@ public class StoreNode extends AbstractActorWithStash {
 
     /**
      * New StoreNode with the specified hashPartition.
-     * @param storeManager the storeManager ActorRef, to which they refer
      * @param timeoutSeconds the timeout in seconds when asking to other nodes
      */
-    public StoreNode(ActorRef storeManager, long timeoutSeconds) {
-        this.storeManager = storeManager;
+    public StoreNode(long timeoutSeconds) {
 
         data = new HashMap<>();
         nodesOfPartition = new ArrayList<>();
@@ -112,10 +115,24 @@ public class StoreNode extends AbstractActorWithStash {
         return inactive();
     }
 
+    // Subscribe to cluster
+    @Override
+    public void preStart() {
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberEvent.class, ClusterEvent.MemberUp.class);
+        //cluster.join(cluster.selfAddress());
+    }
+
     @Override
     public void preRestart(Throwable reason, Option<Object> message) throws Exception {
         super.preRestart(reason, message);
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class);
         getContext().become(inactive());
+    }
+
+    // Re-subscribe when restart
+    @Override
+    public void postStop() {
+        cluster.unsubscribe(self());
     }
 
     //Behaviors TODO
@@ -123,7 +140,10 @@ public class StoreNode extends AbstractActorWithStash {
     private Receive inactive() {
         return receiveBuilder()
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
+                .match(GrantAccessToStoreMsg.class, this::onGrantAccessToStoreMsg)
                 .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
+                .match(ClusterEvent.MemberUp.class, this::onMemberUp)
+                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("received message " +msg);})
                 .matchAny(msg -> stash())
                 .build();
     }
@@ -135,6 +155,18 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .matchAny(this::onUnknownMessage)
                 .build();
+    }
+
+
+    private void onMemberUp(ClusterEvent.MemberUp mUp) {
+
+    }
+
+
+    private void onGrantAccessToStoreMsg(GrantAccessToStoreMsg msg) {
+        storeManager = msg.getStoreManagerRef();
+        nodeNumber = msg.getNodeNumber();
+        storeManager.tell(new RequestActivateMsg(self()), self());
     }
 
 
@@ -316,8 +348,8 @@ public class StoreNode extends AbstractActorWithStash {
 
 
 
-    public static Props props(ActorRef storeManager, long timeoutSeconds) {
-        return Props.create(StoreNode.class, storeManager, timeoutSeconds);
+    public static Props props(long timeoutSeconds) {
+        return Props.create(StoreNode.class, timeoutSeconds);
     }
 
 

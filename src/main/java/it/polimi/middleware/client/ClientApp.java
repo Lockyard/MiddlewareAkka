@@ -17,13 +17,13 @@ public class ClientApp {
 
     public static void main (String[] args) {
 
-        if(args.length > 0 && args [0].equalsIgnoreCase("--help"))
+        if(args.length > 0 && (args[0].equalsIgnoreCase("-help") || args [0].equalsIgnoreCase("-h")))
             System.out.println("args: [serverAddress serverPort].\nIf not provided, default values will be used" +
                     "Use 1 argument to insert the address, or use 'd' as 1st arg to set default address but specify port");
 
         //set server address and port from args. If not provided, default ones are used
         final String serverAddress = (args.length > 0 && !args[0].equals("d")) ? args[0] : "127.0.0.1";
-        final String serverPort = args.length > 1 ? args [1] : "54333";
+        final String serverPort = args.length > 1 ? args [1] : "9000";
 
         //Load config resource file and start the ClientActor
         final Config conf = ConfigFactory.load("conf/client.conf");
