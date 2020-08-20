@@ -1,5 +1,7 @@
 package it.polimi.middleware.messages;
 
+import akka.actor.ActorRef;
+
 import java.io.Serializable;
 
 /**
@@ -11,19 +13,21 @@ public class PutMsg extends ServiceMessage implements Serializable {
      */
     private static final long serialVersionUID = 77124090000123303L;
 
+    private static final byte DEFAULT_ALIVE_STEPS = 64;
+
     private final String key;
     private final String val;
 
     private long clientID = 0;
+
+    private ActorRef sender;
+
+    //for how many passages of message at most this message will remain alive
+    private byte aliveSteps;
     /**
      * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
      */
     private long newness;
-
-    /**
-     * How many replicas must write the new value before sending a reply to this message
-     */
-    private byte writesUntilReply;
 
 
     /**
@@ -34,54 +38,28 @@ public class PutMsg extends ServiceMessage implements Serializable {
     public PutMsg(String key, String val) {
         this.key = key;
         this.val = val;
-        writesUntilReply = 1;
         //default newness is 0
         newness = 0;
-    }
-
-    /**
-     * Create a PutMsg specifying also how many replicas should write the new value before responding.
-     * @param key the key for the store
-     * @param val the new value to be inserted
-     * @param writesUntilReply <= 0 to request a reply after every replicas' write. >0 to specify the number of replicas
-     */
-    public PutMsg(String key, String val, byte writesUntilReply) {
-        this.key = key;
-        this.val = val;
-        this.writesUntilReply = writesUntilReply;
-        newness = 0;
-    }
-
-
-
-
-
-    /**
-     * Ask to this message if there should be a reply now. This method is supposed to be called after a write on the
-     * current replica managing this message occurred.
-     * @return true if the replica managing this message should reply now, false if should forward to the next replica
-     */
-    public boolean shouldReplyAfterThisWrite() {
-        //if 0 or less this means that was requested that all replicas must write, so the message itself will never
-        //specify when it's the moment to write
-        if(writesUntilReply <= 0) {
-            return false;
-            //else reduce the number of writes. If now is 0, return true to tell that is time to reply
-        } else {
-            writesUntilReply--;
-            return writesUntilReply == 0;
-        }
+        sender = ActorRef.noSender();
+        aliveSteps = DEFAULT_ALIVE_STEPS;
     }
 
 
 
     /**
-     * Ask if this put message has yet to be replied to
-     * @return true if hasn't yet told to anyone to reply to this message
+     * Reduce the alive steps of this message
+     * @return true if it has finished the alive steps, false if is still alive
      */
-    public boolean requiresReply() {
-        return writesUntilReply > 0;
+    public boolean reduceAliveSteps() {
+        aliveSteps--;
+        return aliveSteps <= 0;
     }
+
+    public byte getAliveSteps() {
+        return aliveSteps;
+    }
+
+    //getters, setters
 
     public final String getKey() {
         return key;
@@ -107,13 +85,14 @@ public class PutMsg extends ServiceMessage implements Serializable {
         return newness;
     }
 
-    public byte getWritesUntilReply() {
-        return writesUntilReply;
+    public void setSender(ActorRef sender) {
+        this.sender = sender;
     }
 
-    public void setWritesUntilReply(byte writesUntilReply) {
-        this.writesUntilReply = writesUntilReply;
+    public ActorRef sender() {
+        return sender;
     }
+
 
     @Override
     public String toString() {

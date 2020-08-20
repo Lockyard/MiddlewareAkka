@@ -131,7 +131,7 @@ public class StoreNode extends AbstractActorWithStash {
     private Receive active() {
         return receiveBuilder()
                 .match(GetMsg.class, this::onGetMessage)
-                .match(PutMsg.class, this::onPutMessage)
+                .match(PutMsg.class, this::tryOnPutMessage)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .matchAny(this::onUnknownMessage)
                 .build();
@@ -219,6 +219,14 @@ public class StoreNode extends AbstractActorWithStash {
         }
     }
 
+    private void tryOnPutMessage(PutMsg msg) {
+        try {
+            onPutMessage(msg);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 
 
     /**
@@ -226,14 +234,20 @@ public class StoreNode extends AbstractActorWithStash {
      * or the sender of the putMsg was this' previous replica.
      * Then reply if it's ok according to the number of writes requested in the put message.
      * Finally send this put message to the next replica in the hierarchical list
-     * @param putMsg
+     * @param putMsg the put message
      */
     private void onPutMessage(PutMsg putMsg) {
-        Logger.std.dlog(self().path().name() + ": put message received with key: " + putMsg.getKey() + "" +
-                ", val: " +putMsg.getVal() + " from " +sender().path().name());
+        //decrease alive time (in steps of passage) of the message and eventually answer with an error
+        if(putMsg.reduceAliveSteps()) {
+            Logger.std.ilog(self().path().name() + " received a put message to be killed. It has been discarded");
+            sender().tell(new ReplyErrorMsg("Put message was forwarded too many times and has been killed"), self());
+            return;
+        }
+
+        Logger.std.dlog(self().path().name() + " received put message " + putMsg.toString());
 
         //if is a legit request: from client assigned to this node or another node of the system
-        if(assignedClientIDs.contains(putMsg.getClientID()) || storeNodesSet.contains(sender())) {
+        if(assignedClientIDs.contains(putMsg.getClientID()) || storeNodesSet.contains(putMsg.sender())) {
 
             int partition = putMsg.getKey().hashCode() % hashSpacePartition;
             List<ActorRef> nodesOfKey = nodesOfPartition.get(partition);
@@ -245,6 +259,7 @@ public class StoreNode extends AbstractActorWithStash {
                 if(nodesOfKey.get(0).equals(self())) {
                     insertData(putMsg);
                     if(nodesOfKey.size() >= 2) {
+                        putMsg.setSender(self());
                         CompletableFuture<Object> future = ask(nodesOfKey.get(1), putMsg, timeout.multipliedBy(nodesOfKey.size()-1)).toCompletableFuture();
                         pipe(future, getContext().dispatcher()).to(sender());
                     }
@@ -252,7 +267,7 @@ public class StoreNode extends AbstractActorWithStash {
 
                 //if is not leader but the put comes from the leader, then update data, and forward if there are
                 //replicas after this one, or reply to the leader if is the last replica
-                else if(nodesOfKey.get(0).equals(sender())) {
+                else if(nodesOfKey.get(0).equals(putMsg.sender())) {
                     Logger.std.dlog(self().path().name() + "is not leader, put request from leader");
                     //update data
                     insertData(putMsg);
@@ -264,16 +279,17 @@ public class StoreNode extends AbstractActorWithStash {
                     else {
                         nodesOfKey.get(nodesOfKey.indexOf(self())+1).forward(putMsg, getContext());
                     }
-
                 }
-                //then this is a client access point but this node has no leadership on that key. ask to the leader
+                //else this is a client access point but this node has no leadership on that key. ask to the leader
                 else {
+                    putMsg.setSender(self());
                     CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
                     pipe(future, getContext().dispatcher()).to(sender());
                 }
             }
             //if the node doesn't have this key assigned, ask to the leader of the key to perform a put
              else {
+                 putMsg.setSender(self());
                 CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
                 pipe(future, getContext().dispatcher()).to(sender());
             }
