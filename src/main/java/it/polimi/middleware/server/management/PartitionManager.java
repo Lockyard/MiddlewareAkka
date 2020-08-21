@@ -244,7 +244,7 @@ public class PartitionManager {
         int originalAmount = amount;
         List<Integer> partitionsOfGiver = partitionsOfNode.get(giverNode);
         List<Integer> partitionsOfTaker = partitionsOfNode.get(takerNode);
-        Logger.std.dlog(giverNode.path().name() + " giving " +amount + " partitions to " +takerNode.path().name());
+        Logger.std.dlog(formatNameForActorRef(giverNode) + " giving " +amount + " partitions to " +formatNameForActorRef(takerNode));
         for (int i = 0; i < partitionsOfGiver.size() && amount > 0; i++) {
             //if the taker doesn't have yet that partition assigned, take it and reduce the amount to take
             if(!partitionsOfTaker.contains(partitionsOfGiver.get(i))) {
@@ -310,7 +310,7 @@ public class PartitionManager {
         StringBuilder sb = new StringBuilder();
         sb.append("PartitionManager Nodes -> Partitions: -------------------------\n");
         for (Map.Entry<ActorRef, List<Integer>> entry : partitionsOfNode.entrySet()) {
-            sb.append("" + entry.getKey().path().name() + ", - P:" + entry.getValue() + " (" + loadOfNode(entry.getKey()) + ")\n");
+            sb.append("" + formatNameForActorRef(entry.getKey()) + ", - P:" + entry.getValue() + " (" + loadOfNode(entry.getKey()) + ")\n");
         }
         sb.append("-------------------------------------------------------------");
         return sb.toString();
@@ -321,7 +321,7 @@ public class PartitionManager {
         for (int i = 0; i < nodesOfPartition.size(); i++) {
             sb.append("P:" + i + " - [");
             for (int j = 0; j < nodesOfPartition.get(i).size(); j++) {
-                sb.append(nodesOfPartition.get(i).get(j).path().name());
+                sb.append(formatNameForActorRef(nodesOfPartition.get(i).get(j)));
                 if(j != nodesOfPartition.get(i).size()-1)
                     sb.append(", ");
                 else
@@ -334,7 +334,7 @@ public class PartitionManager {
     public String toStringListOfNodes() {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < nodes.size(); i++) {
-            sb.append(nodes.get(i).path().name() + " (" + loadOfNode(nodes.get(i)) + "), ");
+            sb.append(formatNameForActorRef(nodes.get(i)) + " (" + loadOfNode(nodes.get(i)) + "), ");
             if(i%4 == 3)
                 sb.append("\n");
         }
@@ -357,8 +357,22 @@ public class PartitionManager {
     private List<Integer> availablePartitionsToInsert(ActorRef giverNode, ActorRef takerNode) {
         List<Integer> giverPartitions = new ArrayList<>(partitionsOfNode.get(giverNode));
         giverPartitions.removeAll(partitionsOfNode.get(takerNode));
-        Logger.std.dlog("giver:"+giverNode.path().name() +", taker:" +takerNode.path().name()+", available: " + giverPartitions);
+        Logger.std.dlog("giver:"+formatNameForActorRef(giverNode) +", taker:" +formatNameForActorRef(takerNode) +", available: " + giverPartitions);
         return giverPartitions;
+    }
+
+
+    private String formatNameForActorRef(ActorRef ref) {
+        StringBuilder sb = new StringBuilder(ref.path().name() + "@");
+        if(ref.path().address().host().nonEmpty())
+            sb.append(ref.path().address().host().get());
+        else
+            sb.append("[ip?]");
+        if(ref.path().address().port().nonEmpty())
+            sb.append(":"+ref.path().address().port().get());
+        else
+            sb.append(":[port?]");
+        return sb.toString();
     }
 
 

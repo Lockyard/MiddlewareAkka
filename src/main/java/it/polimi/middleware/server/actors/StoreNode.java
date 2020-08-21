@@ -24,7 +24,7 @@ import java.util.concurrent.CompletableFuture;
 public class StoreNode extends AbstractActorWithStash {
     private final Cluster cluster = Cluster.get(getContext().system());
 
-    private int nodeNumber;
+    private int nodeNumber = -1;
 
     private Duration timeout;
     /**
@@ -39,7 +39,7 @@ public class StoreNode extends AbstractActorWithStash {
     /**
      * The main data contained inside this StoreNode
      */
-    private HashMap<String, ValueData> data;
+    private HashMap<Integer, HashMap<String, ValueData>> dataPerPartition;
 
     /**
      * This "map" states, for each partition, which nodes have data of that partition, and in which order
@@ -59,17 +59,17 @@ public class StoreNode extends AbstractActorWithStash {
      * whose key are integer representing a partition, and for each partition as value there is the
      * logical ID of the last operation done by that client on that partition.
      */
-    private HashMap<Long, HashMap<Integer, Integer>> clientOpIDMap;
+    private Map<Long, Map<Integer, Integer>> clientOpIDMap;
 
     /**
      * The set of the partitions assigned to this node
      */
-    private Set<Integer> assignedPartitions;
+    private final Set<Integer> assignedPartitions;
 
     /**
      * the set of all assigned clients to this node
      */
-    private Set<Long> assignedClientIDs;
+    private final Set<Long> assignedClientIDs;
 
     //round robin index
     private int rrIndex=0;
@@ -82,7 +82,7 @@ public class StoreNode extends AbstractActorWithStash {
     public StoreNode(ActorRef storeManager) {
         this.storeManager = storeManager;
 
-        data = new HashMap<>();
+        dataPerPartition = new HashMap<>();
         nodesOfPartition = new ArrayList<>();
         clientOpIDMap = new HashMap<>();
         assignedPartitions = new HashSet<>();
@@ -98,7 +98,7 @@ public class StoreNode extends AbstractActorWithStash {
      */
     public StoreNode(long timeoutSeconds) {
 
-        data = new HashMap<>();
+        dataPerPartition = new HashMap<>();
         nodesOfPartition = new ArrayList<>();
         clientOpIDMap = new HashMap<>();
         assignedPartitions = new HashSet<>();
@@ -139,20 +139,21 @@ public class StoreNode extends AbstractActorWithStash {
     //when inactive listen for messages updating its information about status and neighbors, stash all the others
     private Receive inactive() {
         return receiveBuilder()
-                .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(GrantAccessToStoreMsg.class, this::onGrantAccessToStoreMsg)
                 .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
                 .match(ClusterEvent.MemberUp.class, this::onMemberUp)
-                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("received message " +msg);})
+                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .matchAny(msg -> stash())
                 .build();
     }
 
     private Receive active() {
         return receiveBuilder()
-                .match(GetMsg.class, this::onGetMessage)
+                .match(GetMsg.class, this::tryOnGetMessage)
                 .match(PutMsg.class, this::tryOnPutMessage)
+                .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
+                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .matchAny(this::onUnknownMessage)
                 .build();
     }
@@ -175,13 +176,41 @@ public class StoreNode extends AbstractActorWithStash {
      * @param msg the update message
      */
     private void onUpdateStoreNodeStatusMessage(UpdateStoreNodeStatusMsg msg) {
-        //TODO
+        if(msg.getNodesOfPartition().size() != hashSpacePartition) {
+            //TODO if dynamic partitions will be implemented
+            Logger.std.dlog("[WARNING] Partitions number is changed! Old is " +hashSpacePartition + ", new: " +
+                    msg.getNodesOfPartition().size() +". This case is not yet managed!");
+        }
+
+        //re-write the set of nodes in the system
+        storeNodesSet = new HashSet<>();
+
+        nodesOfPartition = msg.getNodesOfPartition();
+
+        for (int i = 0; i < msg.getNodesOfPartition().size(); i++) {
+            //if this node is assigned to a partition to which wasn't assigned before, add that partition
+            if(msg.getNodesOfPartition().get(i).contains(self()) && !assignedPartitions.contains(i)) {
+                Logger.std.ilog("Node"+nodeNumber+" adding partition " + i);
+                assignNewPartition(i);
+            }
+            //else if this node is no longer assigned to a partition, remove it
+            else if (!msg.getNodesOfPartition().get(i).contains(self()) && assignedPartitions.contains(i)) {
+                Logger.std.ilog("Node" +nodeNumber+ " removing partition " + i);
+                removePartitionAssignment(i);
+            }
+
+            //for each partition, assign to the new set of nodes all the nodes
+            storeNodesSet.addAll(msg.getNodesOfPartition().get(i));
+        }
+
+        Logger.std.ilog("Node"+nodeNumber+"'s new partitions: " +assignedPartitions +
+                "\n Full partition: " + toStringNodesOfPartition());
 
     }
 
 
     private void onActivateNodeMessage(ActivateNodeMsg msg) {
-        Logger.std.dlog(self().path().name() + " received as nodesOfPartitions: " + msg.getNodesOfPartition()
+        Logger.std.dlog("Node" +nodeNumber+ " received as nodesOfPartitions: " + msg.getNodesOfPartition()
                 + "\nsize: " +msg.getNodesOfPartition().size());
         hashSpacePartition = msg.getNodesOfPartition().size();
         nodesOfPartition = msg.getNodesOfPartition();
@@ -192,8 +221,14 @@ public class StoreNode extends AbstractActorWithStash {
             if(nodesOfPartition.get(i).contains(self()))
                 assignedPartitions.add(i);
         }
-        Logger.std.dlog(self().path().name() + " received partitions: " + assignedPartitions);
-        Logger.std.dlog("Final hashmap for node " +self().path().name()+":\n" + toStringNodesOfPartition());
+
+        for (Integer assignedPartition :
+                assignedPartitions) {
+            dataPerPartition.put(assignedPartition, new HashMap<>());
+        }
+
+        Logger.std.dlog("Node" +nodeNumber+ " received partitions: " + assignedPartitions);
+        Logger.std.dlog("Final hashmap for Node" +nodeNumber+":\n" + toStringNodesOfPartition());
 
 
         if(msg.mustRequestData()) {
@@ -204,6 +239,14 @@ public class StoreNode extends AbstractActorWithStash {
         unstashAll();
     }
 
+    private void tryOnGetMessage(GetMsg msg) {
+        try {
+            onGetMessage(msg);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
 
     /**
      * Get Messages comes from clients. check if id corresponds to one assigned to this node, and if ok get the datum.
@@ -211,22 +254,16 @@ public class StoreNode extends AbstractActorWithStash {
      * @param getMsg the get message from the client
      */
     private void onGetMessage(GetMsg getMsg) {
-        Logger.std.dlog(self().path().name() + " received get message with key " + getMsg.getKey() +
+        Logger.std.dlog("Node" +nodeNumber+ " received get message with key " + getMsg.getKey() +
                 " from " +sender().path().name());
         //check client id or if request comes from another node in the system
         if(assignedClientIDs.contains(getMsg.getClientID()) || storeNodesSet.contains(sender())) {
-            int partition = getMsg.getKey().hashCode() % hashSpacePartition;
+            int partition = partitionOf(getMsg.getKey());
             //if datum is assigned to this replica
-            if(assignedPartitions.contains(partition)) {
+            if(dataPerPartition.containsKey(partition)) {
                 //if there is a value, get it
-                if(data.containsKey(getMsg.getKey())) {
-                    ValueData vd = data.get(getMsg.getKey());
-                    sender().tell(new ReplyGetMsg(getMsg.getKey(), vd.getValue()), self());
-                }
-                //there is no datum, return null
-                else {
-                    sender().tell(new ReplyGetMsg(getMsg.getKey(), null), self());
-                }
+                sender().tell(new ReplyGetMsg(getMsg.getKey(),
+                        getDataValue(getMsg.getKey(), partition)), self());
             }
             // if datum is  not assigned to this replica, ask to another replica to which has it assigned
             else {
@@ -241,13 +278,6 @@ public class StoreNode extends AbstractActorWithStash {
         else {
             sender().tell(new ReplyErrorMsg("The client requesting the operation has not authorization" +
                     " on this node"), self());
-        }
-        //if there is some datum is in memory at the specified key, get it
-        if(data.containsKey(getMsg.getKey())) {
-            ValueData vd = data.get(getMsg.getKey());
-        }
-        else {
-
         }
     }
 
@@ -271,17 +301,17 @@ public class StoreNode extends AbstractActorWithStash {
     private void onPutMessage(PutMsg putMsg) {
         //decrease alive time (in steps of passage) of the message and eventually answer with an error
         if(putMsg.reduceAliveSteps()) {
-            Logger.std.ilog(self().path().name() + " received a put message to be killed. It has been discarded");
+            Logger.std.ilog("Node" +nodeNumber+ " received a put message to be killed. It has been discarded");
             sender().tell(new ReplyErrorMsg("Put message was forwarded too many times and has been killed"), self());
             return;
         }
 
-        Logger.std.dlog(self().path().name() + " received put message " + putMsg.toString());
+        Logger.std.dlog("Node" +nodeNumber+ " received put message " + putMsg.toString());
 
         //if is a legit request: from client assigned to this node or another node of the system
         if(assignedClientIDs.contains(putMsg.getClientID()) || storeNodesSet.contains(putMsg.sender())) {
 
-            int partition = putMsg.getKey().hashCode() % hashSpacePartition;
+            int partition = partitionOf(putMsg.getKey());
             List<ActorRef> nodesOfKey = nodesOfPartition.get(partition);
 
             //if this node have assigned the partition of that key
@@ -289,7 +319,7 @@ public class StoreNode extends AbstractActorWithStash {
 
                 //if this is the leader of the partition of that datum, write and propagate
                 if(nodesOfKey.get(0).equals(self())) {
-                    insertData(putMsg);
+                    insertData(putMsg, partition);
                     if(nodesOfKey.size() >= 2) {
                         putMsg.setSender(self());
                         CompletableFuture<Object> future = ask(nodesOfKey.get(1), putMsg, timeout.multipliedBy(nodesOfKey.size()-1)).toCompletableFuture();
@@ -300,9 +330,9 @@ public class StoreNode extends AbstractActorWithStash {
                 //if is not leader but the put comes from the leader, then update data, and forward if there are
                 //replicas after this one, or reply to the leader if is the last replica
                 else if(nodesOfKey.get(0).equals(putMsg.sender())) {
-                    Logger.std.dlog(self().path().name() + "is not leader, put request from leader");
+                    Logger.std.dlog("Node" +nodeNumber+ "is not leader, put request from leader");
                     //update data
-                    insertData(putMsg);
+                    insertData(putMsg, partition);
 
                     //if is last node, reply to the leader
                     if(nodesOfKey.get(nodesOfKey.size()-1).equals(self())) {
@@ -342,7 +372,7 @@ public class StoreNode extends AbstractActorWithStash {
 
     private void onUnknownMessage(Object unknownMsg) {
         //simply log the unknown message
-        Logger.std.log(Logger.LogLevel.VERBOSE, "Unknown message received by " + self().path().name() +": " + unknownMsg);
+        Logger.std.log(Logger.LogLevel.VERBOSE, "Unknown message received by Node" + nodeNumber+ ": " + unknownMsg);
     }
 
 
@@ -355,8 +385,44 @@ public class StoreNode extends AbstractActorWithStash {
 
     ///Other private methods
 
-    private void insertData(PutMsg putMsg) {
-        data.put(putMsg.getKey(), new ValueData(putMsg.getVal()));
+    private int partitionOf(String key) {
+        return key.hashCode() % hashSpacePartition;
+    }
+
+    private boolean hasData(String key, int partition) {
+        if(!dataPerPartition.containsKey(partition) || !dataPerPartition.get(partition).containsKey(key))
+            return false;
+        return true;
+    }
+
+    /**
+     * Get the String value for a key if exists, null otherwise
+     * @param key the key of the datum
+     * @param partition the partition related to the key
+     * @return the string if present in memory, null if not present
+     */
+    private String getDataValue(String key, int partition) {
+        if(!dataPerPartition.containsKey(partition) || !dataPerPartition.get(partition).containsKey(key))
+            return null;
+        return dataPerPartition.get(partition).get(key).getValue();
+    }
+
+    private void insertData(PutMsg putMsg, int partition) {
+        if(!dataPerPartition.containsKey(partition))
+            dataPerPartition.put(partition, new HashMap<>());
+
+        dataPerPartition.get(partition).put(putMsg.getKey(), new ValueData(putMsg.getVal()));
+    }
+
+
+    private void assignNewPartition(int partition) {
+        dataPerPartition.put(partition, new HashMap<>());
+        assignedPartitions.add(partition);
+    }
+
+    private void removePartitionAssignment(int partitionRemoved) {
+        dataPerPartition.remove(partitionRemoved);
+        assignedPartitions.remove(partitionRemoved);
     }
 
     private String toStringNodesOfPartition() {
@@ -364,7 +430,7 @@ public class StoreNode extends AbstractActorWithStash {
         for (int i = 0; i < nodesOfPartition.size(); i++) {
             sb.append("P:" + i + " - [");
             for (int j = 0; j < nodesOfPartition.get(i).size(); j++) {
-                sb.append(nodesOfPartition.get(i).get(j).path().name());
+                sb.append(formatNameForActorRef(nodesOfPartition.get(i).get(j)));
                 if(j != nodesOfPartition.get(i).size()-1)
                     sb.append(", ");
                 else
@@ -372,6 +438,16 @@ public class StoreNode extends AbstractActorWithStash {
             }
         }
         return sb.toString();
+    }
+
+    private String formatNameForActorRef(ActorRef ref) {
+
+        //if both are nonempty then the ref is not this (or so it appears)
+        if(ref.path().address().host().nonEmpty() && ref.path().address().port().nonEmpty()) {
+            return ref.path().name() + "@" +ref.path().address().host().get() + ":" + ref.path().address().port().get();
+        } else {
+            return "Node"+nodeNumber;
+        }
     }
 
     private void checkHistoryForMessage(String key, long newness) {

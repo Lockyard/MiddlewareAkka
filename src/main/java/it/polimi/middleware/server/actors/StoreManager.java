@@ -109,8 +109,17 @@ public class StoreManager extends AbstractActor {
         Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path().name());
         partitionManager.addNode(msg.getStoreNodeRef());
         storeNodes.add(msg.getStoreNodeRef());
+
+        //if system is running, adding it to the partition manager means updating every node possibly.
+        //Notify every node of the new assignments and activate the one making this request
         if(partitionManager.isRunning()) {
-            msg.getStoreNodeRef().tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), false), self());
+            for (ActorRef node :
+                    storeNodes) {
+                if (node.equals(msg.getStoreNodeRef()))
+                    node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                else
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+            }
         }
     }
 
