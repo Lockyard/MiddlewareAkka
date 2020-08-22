@@ -288,7 +288,7 @@ public class StoreNode extends AbstractActorWithStash {
             //if datum is assigned to this replica
             if(dataPerPartition.containsKey(partition)) {
                 //if there is a value, get it
-                getMsg.sender().tell(new ReplyGetMsg(getMsg.getKey(),
+                sender().tell(new ReplyGetMsg(getMsg.getKey(),
                         getDataValue(getMsg.getKey(), partition)), self());
             }
             // if datum is  not assigned to this replica, ask to another replica to which has it assigned
