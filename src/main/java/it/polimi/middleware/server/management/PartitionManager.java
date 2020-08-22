@@ -497,7 +497,12 @@ public class PartitionManager {
      * At index i there's a list containing all the ActorRefs which are assigned to the partition i
      */
     public List<List<ActorRef>> getNodesOfPartitionList() {
-        return new ArrayList<>(nodesOfPartition);
+        List<List<ActorRef>> res = new ArrayList<>();
+        //noinspection ForLoopReplaceableByForEach
+        for (int i = 0; i < nodesOfPartition.size(); i++) {
+            res.add(new ArrayList<>(nodesOfPartition.get(i)));
+        }
+        return res;
     }
 
 

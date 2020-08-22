@@ -7,6 +7,9 @@ import java.io.Serializable;
  * coherent with client requests
  */
 public class ValueData implements Serializable {
+
+    private static final long serialVersionUID = 33334090000123001L;
+
     public static final int DEFAULT_NEWNESS = 0;
 
     private String value;

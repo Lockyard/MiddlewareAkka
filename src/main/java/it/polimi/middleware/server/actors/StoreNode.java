@@ -20,7 +20,6 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 
-//TODO qol general for this class is non-block some message such as validData and DataValidationRequest/Reply
 public class StoreNode extends AbstractActorWithStash {
     private final Cluster cluster = Cluster.get(getContext().system());
 
@@ -76,6 +75,10 @@ public class StoreNode extends AbstractActorWithStash {
     //round robin index
     private int rrIndex=0;
 
+    private boolean isInRequestingDataState = false;
+
+    private Set<Integer> partitionsRequired;
+
 
     /**
      * New StoreNode with the specified hashPartition.
@@ -91,6 +94,7 @@ public class StoreNode extends AbstractActorWithStash {
         storeNodesSet = new HashSet<>();
         assignedClientIDs = new HashSet<>();
         unreachableNodes = new HashSet<>();
+        partitionsRequired = new HashSet<>();
 
         timeout = Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA);
     }
@@ -146,6 +150,8 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(GrantAccessToStoreMsg.class, this::onGrantAccessToStoreMsg)
                 .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
+                .match(PartitionRequestMsg.class, this::onPartitionRequestMsg)
+                .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
                 .matchAny(msg -> stash())
                 .build();
     }
@@ -155,6 +161,8 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(GetMsg.class, this::tryOnGetMessage)
                 .match(PutMsg.class, this::tryOnPutMessage)
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
+                .match(PartitionRequestMsg.class, this::onPartitionRequestMsg)
+                .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
                 .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
@@ -202,6 +210,7 @@ public class StoreNode extends AbstractActorWithStash {
      * @param msg the update message
      */
     private void onUpdateStoreNodeStatusMessage(UpdateStoreNodeStatusMsg msg) {
+
         if(msg.getNodesOfPartition().size() != hashSpacePartition) {
             //TODO if dynamic partitions will be implemented
             Logger.std.dlog("[WARNING] Partitions number is changed! Old is " +hashSpacePartition + ", new: " +
@@ -236,6 +245,7 @@ public class StoreNode extends AbstractActorWithStash {
 
 
     private void onActivateNodeMessage(ActivateNodeMsg msg) {
+
         Logger.std.dlog("Node" +nodeNumber+ " received as nodesOfPartitions: " + msg.getNodesOfPartition()
                 + "\nsize: " +msg.getNodesOfPartition().size());
         hashSpacePartition = msg.getNodesOfPartition().size();
@@ -257,13 +267,72 @@ public class StoreNode extends AbstractActorWithStash {
         Logger.std.dlog("Final hashmap for Node" +nodeNumber+":\n" + toStringNodesOfPartition());
 
 
+        //if has to request data, request it and wait to become active
         if(msg.mustRequestData()) {
-            //TODO
+            isInRequestingDataState = true;
+            partitionsRequired = new HashSet<>(assignedPartitions);
+            for (Integer partition: assignedPartitions) {
+                if(nodesOfPartition.get(partition).get(0) != null && !nodesOfPartition.get(partition).get(0).equals(self()))
+                    nodesOfPartition.get(partition).get(0).tell(new PartitionRequestMsg(partition), self());
+            }
+        }
+        //if doesn't have to request data, become active now
+        else {
+            getContext().become(active());
+            unstashAll();
         }
 
-        getContext().become(active());
-        unstashAll();
     }
+
+    /**
+     * On partition request, send to the node asking for it the data required if this is the leader.
+     * If is not, forward this to the leader
+     * @param msg
+     */
+    private void onPartitionRequestMsg(PartitionRequestMsg msg) {
+        Logger.std.dlog("Node"+nodeNumber+" received PartitionRequestMsg for partition " +msg.getPartitionRequired());
+        if(!msg.open()) {
+            Logger.std.dlog("Message PartitionRequest was killed due to many forwards");
+            return;
+        }
+
+
+        //if this node is the leader, answer with its data
+        if(nodesOfPartition.get(msg.getPartitionRequired()).get(0).compareTo(self()) == 0) {
+            Logger.std.dlog("Leader of partition " + msg.getPartitionRequired()+ " received partition request, giving a copy of this data to " + sender());
+            sender().tell(new PartitionRequestReplyMsg(msg.getPartitionRequired(),
+                    dataPerPartition.get(msg.getPartitionRequired())), self());
+        }
+        //if this is not the leader for any reason, forward the request to the true leader
+        else {
+            nodesOfPartition.get(msg.getPartitionRequired()).get(0).forward(msg, getContext());
+        }
+    }
+
+
+
+    private void onPartitionRequestReplyMsg(PartitionRequestReplyMsg msg) {
+        if(isInRequestingDataState) {
+            //if the partition was one required, remove it and put the new data in
+            if(partitionsRequired.remove(msg.getPartitionRequired())) {
+                Logger.std.dlog("Node"+nodeNumber+" adding data for partition " + msg.getPartitionRequired());
+                dataPerPartition.put(msg.getPartitionRequired(), msg.getPartitionData());
+            }
+
+            //if all the partitions required are received, activate the node and unstash everything.
+            //if it was already active it does nothing
+            if(partitionsRequired.isEmpty()) {
+                isInRequestingDataState = false;
+                Logger.std.dlog("Node"+nodeNumber+" got all the data needed. Activating the node");
+                getContext().become(active());
+                unstashAll();
+            }
+        } else {
+            Logger.std.dlog("Node"+nodeNumber+" received a partition request reply not asked for!" +
+                    " (partition:" +msg.getPartitionRequired()+", sender:" + sender());
+        }
+    }
+
 
     private void tryOnGetMessage(GetMsg msg) {
         try {
@@ -439,6 +508,11 @@ public class StoreNode extends AbstractActorWithStash {
         return dataPerPartition.get(partition).get(key).getValue();
     }
 
+    /**
+     * Insert a datum in the node's data
+     * @param putMsg the message with the key and value
+     * @param partition the partition of the key
+     */
     private void insertData(PutMsg putMsg, int partition) {
         if(!dataPerPartition.containsKey(partition))
             dataPerPartition.put(partition, new HashMap<>());
@@ -450,12 +524,18 @@ public class StoreNode extends AbstractActorWithStash {
     private void assignNewPartition(int partition) {
         dataPerPartition.put(partition, new HashMap<>());
         assignedPartitions.add(partition);
+        //request the data
+        isInRequestingDataState = true;
+        partitionsRequired.add(partition);
+        nodesOfPartition.get(partition).get(0).tell(new PartitionRequestMsg(partition), self());
+
     }
 
     private void removePartitionAssignment(int partitionRemoved) {
         dataPerPartition.remove(partitionRemoved);
         assignedPartitions.remove(partitionRemoved);
     }
+
 
     private String toStringNodesOfPartition() {
         StringBuilder sb = new StringBuilder();
@@ -471,6 +551,7 @@ public class StoreNode extends AbstractActorWithStash {
         }
         return sb.toString();
     }
+
 
     private String formatNameForActorRef(ActorRef ref) {
 
