@@ -56,14 +56,15 @@ public class ClientActor extends AbstractActor {
 
 
     private void onGetMsg(GetMsg msg) {
-        Logger.std.dlog("sending get message to " + accessNodes.get(i).path().name());
+        Logger.std.dlog("sending get message to " + accessNodes.get(i).path().address());
         msg.setClientID(clientID);
+        msg.setSender(self());
         accessNodes.get(i).tell(msg, self());
         roundRobin();
     }
 
     private void onPutMsg(PutMsg msg) {
-        Logger.std.dlog("sending put message to " + accessNodes.get(i).path().name());
+        Logger.std.dlog("sending put message to " + accessNodes.get(i).path().address());
         msg.setClientID(clientID);
         msg.setSender(self());
         accessNodes.get(i).tell(msg, self());
@@ -83,7 +84,7 @@ public class ClientActor extends AbstractActor {
                 accessNodes = new ArrayList<>(msg.getTotalAssignedActors());
             }
             accessNodes.add(msg.getAssignedActor());
-            ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + msg.getAssignedActor().path().name()+")" +
+            ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + msg.getAssignedActor().path().address()+")" +
                     " , " + accessNodes.size() + "/" + msg.getTotalAssignedActors());
         } else {
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Greeting with server failed [" + msg.getDescription()+"]");

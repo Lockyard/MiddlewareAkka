@@ -33,11 +33,17 @@ public class StoreManager extends AbstractActor {
     //progressive number assigned to new nodes to identify themselves
     private int nodeNumber = 0;
 
+    private boolean autoStart;
+
     //In how many partitions the key space is divided
     @SuppressWarnings({"FieldMayBeFinal"})
     private int hashSpacePartition;
     //for each partition, minimum amount of node replicas of the same data there must be
     private final int minimumDataReplicas;
+
+    //If this number of replicas are available (= reachable nodes), take action and warn the system that
+    //too few reachable replicas remain, thus down some node or add some new node
+    private final int minimumReachableDataReplicas;
 
     private PartitionManager partitionManager;
 
@@ -59,6 +65,8 @@ public class StoreManager extends AbstractActor {
         minimumDataReplicas = conf.getInt("store.dataReplicas");
         assignedNodesPerClient = conf.getInt("store.assignedNodesPerClient");
         timeout = Duration.ofSeconds(conf.getInt("store.connection.stdTimeout"));
+        minimumReachableDataReplicas = conf.getInt("store.minReachableReplicasBeforeTakeAction");
+        autoStart = conf.getBoolean("store.autoStartStore");
 
         //prepare the list of lists with the specified capacities:
         //external list is size of the partition of space, each sublist is size of the number of replicas
@@ -72,7 +80,8 @@ public class StoreManager extends AbstractActor {
     // Subscribe to cluster
     @Override
     public void preStart() {
-        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberEvent.class);
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class,
+                ClusterEvent.UnreachableMember.class, ClusterEvent.MemberEvent.class, ClusterEvent.ReachableMember.class);
     }
 
     // Re-subscribe when restart
@@ -87,6 +96,9 @@ public class StoreManager extends AbstractActor {
         return receiveBuilder()
                 .match(GreetingMsg.class, this::onGreetingMessage)
                 .match(ClusterEvent.MemberUp.class, this::onMemberUp)
+                .match(ClusterEvent.MemberDowned.class, this::onMemberDowned)
+                .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
+                .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
                 .match(RequestActivateMsg.class, this::onRequestActivateMsg)
                 .match(StartSystemMsg.class, this::onStartSystemMessage)
                 .build();
@@ -101,12 +113,94 @@ public class StoreManager extends AbstractActor {
         Logger.std.dlog("Member is up: " + memberUp.member());
         if(memberUp.member().hasRole("storenode")) {
             Logger.std.dlog("Sending grant access to this node");
-            getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++), self());
+            getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++, true), self());
         }
     }
 
+    private void onMemberDowned(ClusterEvent.MemberDowned md) {
+        Logger.std.dlog("Member is downed: " + md.member());
+        //remove all the storenode associated to that member
+        if(md.member().hasRole("storenode")) {
+            ActorRef nodeToRemove = ActorRef.noSender();
+            for (ActorRef node :
+                    storeNodes) {
+                if(node.path().address().equals(md.member().address())) {
+                    try {
+                        nodeToRemove = node;
+                        partitionManager.removeNode(node);
+                    } catch (NotEnoughNodesException nene) {
+                        Logger.std.ilog("Not enough nodes left in the system! Spawning local node " +
+                                "to reach minimum data replicas!");
+                        ActorRef newNode = spawnLocalNode();
+                        newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                    }
+                }
+            }
+
+            //remove the node, notify all other nodes of new assignments
+            if (storeNodes.remove(nodeToRemove)) {
+                Logger.std.dlog("Removed from store manager node " +nodeToRemove);
+                for (ActorRef node :
+                        storeNodes) {
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+                }
+            } else {
+                Logger.std.dlog("Tried to remove a node which was not in the store manager. memberAddress: " +md.member().address());
+            }
+        }
+    }
+
+    private void onUnreachableMember(ClusterEvent.UnreachableMember um) {
+        Logger.std.ilog("Detected unreachable member: " +um.member().address());
+
+        boolean markedUnreachable = false;
+        if(um.member().hasRole("storenode")) {
+            for (ActorRef node :
+                    storeNodes) {
+                if (node.path().address().equals(um.member().address())) {
+                    Logger.std.dlog("Found the unreachable member in the storeNodes");
+
+                    partitionManager.markUnreachable(node);
+                    markedUnreachable = true;
+
+                    //if too few reachable partition replicas remain, remove unreachable nodes until there are enough reachable
+                    //replicas again
+                    if(partitionManager.getMinReachableReplicasAmount() <= minimumReachableDataReplicas) {
+                        partitionManager.removeUnreachableNodeUntilSafeNumberOfReplicas(minimumReachableDataReplicas);
+                        int missingNodes = partitionManager.getMissingNodesForMinimumReplicas();
+                        for (int i = 0; i < missingNodes; i++) {
+                            ActorRef newNode = spawnLocalNode();
+                            newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber-1, false), self());
+                            newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                        }
+                    }
+
+                }
+            }
+        }
+
+        //if some node were marked as unreachable something changed, tell to all other nodes
+        if(markedUnreachable)
+            updateAllNodes();
+
+    }
+
+
+
+    private void onReachableMember(ClusterEvent.ReachableMember rm) {
+        if(rm.member().hasRole("storenode")) {
+            for (ActorRef node :
+                    storeNodes) {
+                if(node.path().address().equals(rm.member().address())) {
+                    partitionManager.markReachable(node);
+                }
+            }
+        }
+    }
+
+
     private void onRequestActivateMsg(RequestActivateMsg msg) {
-        Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path().name());
+        Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path());
         partitionManager.addNode(msg.getStoreNodeRef());
         storeNodes.add(msg.getStoreNodeRef());
 
@@ -117,8 +211,23 @@ public class StoreManager extends AbstractActor {
                     storeNodes) {
                 if (node.equals(msg.getStoreNodeRef()))
                     node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
-                else
+                else {
+                    Logger.std.log(Logger.LogLevel.VERBOSE, "Sending update status to " + node);
                     node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+                }
+            }
+        }
+        //if is not running but autostart is on check if the system can start
+        else if(partitionManager.canStart()) {
+            try {
+                partitionManager.start();
+                sendSetupMessagesToStoreNodes();
+                Logger.std.ilog("System auto-started successfully");
+                getContext().parent().tell(new StartSystemReplyMsg(true,
+                                "System auto-started successfully"), self());
+            } catch (NotEnoughNodesException nene) {
+                Logger.std.dlog("Store tried to start after a request activate but failed." +
+                        " This should never happen since there's a check");
             }
         }
     }
@@ -155,17 +264,7 @@ public class StoreManager extends AbstractActor {
      */
     private void localFillStoreRequirements() {
         for (int j = storeNodes.size(); j < minimumDataReplicas; j++) {
-            //load conf file
-            Config conf = ConfigFactory.load("conf/cluster.conf")
-                    .withValue("akka.remote.netty.tcp.port", ConfigValueFactory.fromAnyRef(0)) //
-                    .withValue("akka.cluster.roles", ConfigValueFactory.fromIterable(Collections.singletonList("storeNode")));
-
-            ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
-            //create the new storeNode
-            ActorRef newNode = as.actorOf(StoreNode.props(timeout.getSeconds()), "localStoreNode_"+j);
-            //TODO set the storeManager to the nodes
-            storeNodes.add(newNode);
-            partitionManager.addNode(newNode);
+            spawnLocalNode();
         }
     }
 
@@ -214,6 +313,34 @@ public class StoreManager extends AbstractActor {
 
 
     }
+
+
+
+    private ActorRef spawnLocalNode() {
+        //load conf file
+        Config conf = ConfigFactory.load("conf/cluster.conf")
+                .withValue("akka.remote.netty.tcp.port", ConfigValueFactory.fromAnyRef(0)) //
+                .withValue("akka.cluster.roles", ConfigValueFactory.fromIterable(Collections.singletonList("storeNode")));
+
+        ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
+        //create the new storeNode
+        ActorRef newNode = as.actorOf(StoreNode.props(timeout.getSeconds()), "Node"+ (nodeNumber) + "L");
+        storeNodes.add(newNode);
+        partitionManager.addNode(newNode);
+        newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber++, false), self());
+        return newNode;
+    }
+
+    /**
+     * Update all the active nodes in the system with the routing table of partitions
+     */
+    private void updateAllNodes() {
+        for (ActorRef node :
+                partitionManager.getActiveNodes()) {
+            node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+        }
+    }
+
 
     /**
      * The load of a node, in terms of estimated assigned clients

@@ -5,6 +5,7 @@ import it.polimi.middleware.server.exceptions.NotEnoughNodesException;
 import it.polimi.middleware.util.Logger;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class PartitionManager {
 
@@ -35,6 +36,8 @@ public class PartitionManager {
 
     private List<ActorRef> nodes;
 
+    private List<ActorRef> unreachableNodes;
+
 
     /**
      *
@@ -53,6 +56,7 @@ public class PartitionManager {
         }
         partitionsOfNode = new HashMap<>(partitions * nReplicas);
         nodes = new ArrayList<>();
+        unreachableNodes = new ArrayList<>();
         Logger.std.dlog("creating pm, running is false");
         running = false;
     }
@@ -122,6 +126,9 @@ public class PartitionManager {
             }
 
         }
+
+        Logger.std.dlog("Node added to partition manager. New configuration:\n" +
+                toStringNodesOfPartition()+"\n" +toStringPartitionsOfNode());
     }
 
     private void giveLoadToNewNode(ActorRef newNode) {
@@ -178,6 +185,7 @@ public class PartitionManager {
         if(!nodes.contains(removedNode))
             return;
         nodes.remove(removedNode);
+        unreachableNodes.remove(removedNode);
 
         //make a list of nodes which can receive some partitions from the fallen node, meaning they have not already
         //all its partitions
@@ -188,8 +196,9 @@ public class PartitionManager {
             }
         }
 
-        //if there are no available nodes, then throw exception, and don't remove the node (re-add it)
+        //if there are no available nodes, then throw exception
         if(availableNodes.size() == 0) {
+            partitionsOfNode.remove(removedNode);
             throw new NotEnoughNodesException(nReplicas, nodes.size(), "The node has been removed but not enough nodes are" +
                     " left!");
         } //otherwise if at least one node can take some load, then it's guaranteed that the other nodes can take all its load
@@ -219,14 +228,99 @@ public class PartitionManager {
             }
 
             if(availableNodes.size() == 0) {
+                partitionsOfNode.remove(removedNode);
                 throw new NotEnoughNodesException(nReplicas, nodes.size(), "available nodes is empty while removing" +
                         " a node. This should never happen theoretically");
             }
         }
         //finally remove its reference from partitionsOfNode
         partitionsOfNode.remove(removedNode);
-
+        Logger.std.dlog("Node removed from partition manager. New configuration:\n" +
+                toStringNodesOfPartition()+"\n" +toStringPartitionsOfNode());
     }
+
+
+    /**
+     * Remove the oldest unreachable nodes, until there are again a min number of reachable replicas available
+     * This IGNORES the consistency of data replicas, so after this must be asked eventually if new nodes are needed
+     * @return the List of removed nodes, possibly empty if there are no unreachable nodes
+     */
+    public List<ActorRef> removeUnreachableNodeUntilSafeNumberOfReplicas(int safeReplicasAmount) {
+        List<ActorRef> res = new ArrayList<>();
+        for (int i = 0; getMinReachableReplicasAmount() <= safeReplicasAmount || i < unreachableNodes.size(); i++) {
+            res.add(unreachableNodes.remove(i));
+            try {
+                removeNode(unreachableNodes.get(i));
+            } catch (NotEnoughNodesException nene) {
+                Logger.std.dlog("Not enough nodes remained after unreachable node removal!");
+            }
+        }
+        return res;
+    }
+
+
+    /**
+     * Mark a node as unreachable, making it lose its leadership on every partition and moving its priority of
+     * all partitions to bottom
+     * @param unreachableNode the node which is not reachable, and is currently not available
+     *
+     */
+    public void markUnreachable(ActorRef unreachableNode) {
+
+        if(nodes.contains(unreachableNode)) {
+            unreachableNodes.add(unreachableNode);
+            for (int i = 0; i < nodesOfPartition.size(); i++) {
+                if(nodesOfPartition.get(i).contains(unreachableNode)) {
+                    //move this node on back
+                    nodesOfPartition.get(i).remove(unreachableNode);
+                    nodesOfPartition.get(i).add(unreachableNode);
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Mark a node as reachable again. This will not change its leadership which it lost when marked unreachable
+     * @param reachableNode the reachable again node
+     */
+    public void markReachable(ActorRef reachableNode) {
+        unreachableNodes.remove(reachableNode);
+    }
+
+
+
+
+    /**
+     * @return the minimum number of replicas available (= not unreachable) for each partition. If it's too low can be used
+     *      * to force downing or take actions to not lose the data
+     */
+    public int getMinReachableReplicasAmount() {
+        Map<Integer, Integer> partitionUnreachableAmount = new HashMap<>(partitions);
+
+        for (ActorRef node :
+                unreachableNodes) {
+            for (Integer partition :
+                    partitionsOfNode.get(node)) {
+                if(partitionUnreachableAmount.containsKey(partition))
+                    partitionUnreachableAmount.put(partition, partitionUnreachableAmount.get(partition)+1);
+                else
+                    partitionUnreachableAmount.put(partition, 1);
+            }
+        }
+        AtomicInteger maxUnreachablePartition = new AtomicInteger(0);
+        partitionUnreachableAmount.forEach((k, v) -> {
+            maxUnreachablePartition.set(Math.max(maxUnreachablePartition.get(), v));});
+
+        return nReplicas - maxUnreachablePartition.get();
+    }
+
+
+    public int getMissingNodesForMinimumReplicas() {
+        return Math.max(0, nReplicas - nodes.size());
+    }
+
+
 
 
 
@@ -295,6 +389,21 @@ public class PartitionManager {
             currMinLoad = Math.min(currMinLoad, loadOfNode(node));
         }
         return currMinLoad;
+    }
+
+    public boolean canStart() {
+        return nodes.size() >= nReplicas;
+    }
+
+
+    /**
+     * Get a list of all the active nodes
+     * @return
+     */
+    public List<ActorRef> getActiveNodes() {
+        List<ActorRef> activeNodes = new ArrayList<>(nodes);
+        activeNodes.removeAll(unreachableNodes);
+        return activeNodes;
     }
 
 

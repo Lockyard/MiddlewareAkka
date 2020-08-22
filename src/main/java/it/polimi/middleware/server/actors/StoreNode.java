@@ -54,6 +54,8 @@ public class StoreNode extends AbstractActorWithStash {
      */
     private Set<ActorRef> storeNodesSet;
 
+    private Set<ActorRef> unreachableNodes;
+
     /**
      * Client Operation ID map. Key is the client ID, as value for each client there is a map
      * whose key are integer representing a partition, and for each partition as value there is the
@@ -88,6 +90,7 @@ public class StoreNode extends AbstractActorWithStash {
         assignedPartitions = new HashSet<>();
         storeNodesSet = new HashSet<>();
         assignedClientIDs = new HashSet<>();
+        unreachableNodes = new HashSet<>();
 
         timeout = Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA);
     }
@@ -125,7 +128,8 @@ public class StoreNode extends AbstractActorWithStash {
     @Override
     public void preRestart(Throwable reason, Option<Object> message) throws Exception {
         super.preRestart(reason, message);
-        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class);
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class,
+                ClusterEvent.UnreachableMember.class, ClusterEvent.MemberEvent.class, ClusterEvent.ReachableMember.class);
         getContext().become(inactive());
     }
 
@@ -141,7 +145,6 @@ public class StoreNode extends AbstractActorWithStash {
         return receiveBuilder()
                 .match(GrantAccessToStoreMsg.class, this::onGrantAccessToStoreMsg)
                 .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
-                .match(ClusterEvent.MemberUp.class, this::onMemberUp)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .matchAny(msg -> stash())
                 .build();
@@ -153,21 +156,44 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(PutMsg.class, this::tryOnPutMessage)
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
+                .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
+                .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .matchAny(this::onUnknownMessage)
                 .build();
     }
 
 
-    private void onMemberUp(ClusterEvent.MemberUp mUp) {
+    private void onReachableMember(ClusterEvent.ReachableMember rm) {
+        Logger.std.dlog("Detected reachable member " + rm.member().address());
+        if(rm.member().hasRole("storenode")) {
+            for (ActorRef node :
+                    storeNodesSet) {
+                if(node.path().address().equals(rm.member().address())) {
+                    unreachableNodes.remove(node);
+                }
+            }
+        }
+    }
 
+    private void onUnreachableMember(ClusterEvent.UnreachableMember um) {
+        Logger.std.dlog("Detected unreachable member " +um.member().address());
+        if(um.member().hasRole("storenode")) {
+            for (ActorRef node :
+                    storeNodesSet) {
+                if(node.path().address().equals(um.member().address())) {
+                    unreachableNodes.add(node);
+                }
+            }
+        }
     }
 
 
     private void onGrantAccessToStoreMsg(GrantAccessToStoreMsg msg) {
         storeManager = msg.getStoreManagerRef();
         nodeNumber = msg.getNodeNumber();
-        storeManager.tell(new RequestActivateMsg(self()), self());
+        if(msg.mustRequestActivation())
+            storeManager.tell(new RequestActivateMsg(self()), self());
     }
 
 
@@ -257,18 +283,24 @@ public class StoreNode extends AbstractActorWithStash {
         Logger.std.dlog("Node" +nodeNumber+ " received get message with key " + getMsg.getKey() +
                 " from " +sender().path().name());
         //check client id or if request comes from another node in the system
-        if(assignedClientIDs.contains(getMsg.getClientID()) || storeNodesSet.contains(sender())) {
+        if(assignedClientIDs.contains(getMsg.getClientID()) || storeNodesSet.contains(getMsg.sender())) {
             int partition = partitionOf(getMsg.getKey());
             //if datum is assigned to this replica
             if(dataPerPartition.containsKey(partition)) {
                 //if there is a value, get it
-                sender().tell(new ReplyGetMsg(getMsg.getKey(),
+                getMsg.sender().tell(new ReplyGetMsg(getMsg.getKey(),
                         getDataValue(getMsg.getKey(), partition)), self());
             }
             // if datum is  not assigned to this replica, ask to another replica to which has it assigned
             else {
+
                 List<ActorRef> nodesOfThisPartition = nodesOfPartition.get(partition);
                 roundRobin(nodesOfThisPartition.size());
+
+                Logger.std.dlog("Datum with key " + getMsg.getKey() + ", of P:" +partition +
+                        " is not assigned to this node. Asking to node " + nodesOfThisPartition.get(rrIndex));
+                //set self as sender
+                getMsg.setSender(self());
                 //ask and pipe the answer
                 CompletableFuture<Object> future = ask(nodesOfThisPartition.get(rrIndex), getMsg, timeout).toCompletableFuture();
                 pipe(future, getContext().dispatcher()).to(sender());

@@ -16,7 +16,7 @@ public class ActivateNodeMsg extends ServerMessage {
 
     private final boolean mustRequestData;
 
-    public ActivateNodeMsg(List<List<ActorRef>> nodesOfPartition, boolean mustRequestData) {
+    public ActivateNodeMsg(List<List<ActorRef>> nodesOfPartition,boolean mustRequestData) {
         this.nodesOfPartition = nodesOfPartition;
         this.mustRequestData = mustRequestData;
     }

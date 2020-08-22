@@ -42,7 +42,7 @@ public class MasterNode extends AbstractActor {
 
     private void onStartSystemReplyMsg(StartSystemReplyMsg msg) {
         if(msg.isSuccessful()) {
-            Logger.std.ilog("System started successfully!");
+            Logger.std.ilog("System started successfully! " +msg.getDescription());
         } else {
             Logger.std.ilog("System couldn't start! >> " + msg.getDescription());
         }

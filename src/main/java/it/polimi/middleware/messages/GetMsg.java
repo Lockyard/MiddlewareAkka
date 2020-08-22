@@ -1,5 +1,7 @@
 package it.polimi.middleware.messages;
 
+import akka.actor.ActorRef;
+
 import java.io.Serializable;
 
 /**
@@ -16,10 +18,7 @@ public class GetMsg extends ServiceMessage implements Serializable {
 
     private long clientID = 0;
 
-    /**
-     * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
-     */
-    private long newness=0;
+    private ActorRef sender;
 
     public GetMsg(String key) {
         this.key = key;
@@ -37,16 +36,16 @@ public class GetMsg extends ServiceMessage implements Serializable {
         return clientID;
     }
 
-    public void setNewness(long newness) {
-        this.newness = newness;
+    public void setSender(ActorRef sender) {
+        this.sender = sender;
     }
 
-    public long getNewness() {
-        return newness;
+    public ActorRef sender() {
+        return sender;
     }
 
     @Override
     public String toString() {
-        return "GetMsg[K:"+key+", Newness:"+newness+"]";
+        return "GetMsg[K:"+key+"]";
     }
 }

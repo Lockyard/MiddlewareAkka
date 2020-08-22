@@ -8,11 +8,15 @@ import akka.actor.ActorRef;
 public class GrantAccessToStoreMsg extends ServerMessage {
     private final ActorRef storeManagerRef;
     private final int nodeNumber;
+    private final boolean requestActivation;
 
-    public GrantAccessToStoreMsg(ActorRef storeManagerRef, int nodeNumber) {
+
+    public GrantAccessToStoreMsg(ActorRef storeManagerRef, int nodeNumber, boolean requestActivation) {
         this.nodeNumber = nodeNumber;
         this.storeManagerRef = storeManagerRef;
+        this.requestActivation = requestActivation;
     }
+
 
     public int getNodeNumber() {
         return nodeNumber;
@@ -20,5 +24,9 @@ public class GrantAccessToStoreMsg extends ServerMessage {
 
     public ActorRef getStoreManagerRef() {
         return storeManagerRef;
+    }
+
+    public boolean mustRequestActivation() {
+        return requestActivation;
     }
 }
