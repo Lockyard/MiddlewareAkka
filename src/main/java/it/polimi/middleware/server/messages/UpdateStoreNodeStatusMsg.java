@@ -17,12 +17,19 @@ public class UpdateStoreNodeStatusMsg extends ServerMessage {
 
     private final List<List<ActorRef>> nodesOfPartition;
 
+    private final long updateID;
 
-    public UpdateStoreNodeStatusMsg(List<List<ActorRef>> nodesOfPartition) {
+
+    public UpdateStoreNodeStatusMsg(List<List<ActorRef>> nodesOfPartition, long updateID) {
         this.nodesOfPartition = nodesOfPartition;
+        this.updateID = updateID;
     }
 
     public List<List<ActorRef>> getNodesOfPartition() {
         return nodesOfPartition;
+    }
+
+    public long getUpdateID() {
+        return updateID;
     }
 }

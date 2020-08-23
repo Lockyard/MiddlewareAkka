@@ -25,6 +25,11 @@ public class StoreNode extends AbstractActorWithStash {
 
     private int nodeNumber = -1;
 
+    /**
+     * The progressive id for updates coming from storemanager, to determine older ones
+     */
+    private long currentUpdateID = 0;
+
     private Duration timeout;
     /**
      * In seconds, the timeout for when requesting data to other StoreNodes. Default is 5
@@ -68,6 +73,11 @@ public class StoreNode extends AbstractActorWithStash {
     private final Set<Integer> assignedPartitions;
 
     /**
+     * Set of partitions to be removed from memory when update of nodes is complete
+     */
+    private Set<Integer> partitionsToRemoveOnUpdateComplete;
+
+    /**
      * the set of all assigned clients to this node
      */
     private final Set<Long> assignedClientIDs;
@@ -82,25 +92,6 @@ public class StoreNode extends AbstractActorWithStash {
 
     /**
      * New StoreNode with the specified hashPartition.
-     * @param storeManager the storeManager ActorRef, to which they refer
-     */
-    public StoreNode(ActorRef storeManager) {
-        this.storeManager = storeManager;
-
-        dataPerPartition = new HashMap<>();
-        nodesOfPartition = new ArrayList<>();
-        clientOpIDMap = new HashMap<>();
-        assignedPartitions = new HashSet<>();
-        storeNodesSet = new HashSet<>();
-        assignedClientIDs = new HashSet<>();
-        unreachableNodes = new HashSet<>();
-        partitionsRequired = new HashSet<>();
-
-        timeout = Duration.ofSeconds(TIMEOUT_ON_REQUEST_DATA);
-    }
-
-    /**
-     * New StoreNode with the specified hashPartition.
      * @param timeoutSeconds the timeout in seconds when asking to other nodes
      */
     public StoreNode(long timeoutSeconds) {
@@ -111,6 +102,10 @@ public class StoreNode extends AbstractActorWithStash {
         assignedPartitions = new HashSet<>();
         storeNodesSet = new HashSet<>();
         assignedClientIDs = new HashSet<>();
+        unreachableNodes = new HashSet<>();
+        partitionsRequired = new HashSet<>();
+        partitionsToRemoveOnUpdateComplete = new HashSet<>();
+
 
         timeout = Duration.ofSeconds(timeoutSeconds);
     }
@@ -149,9 +144,11 @@ public class StoreNode extends AbstractActorWithStash {
         return receiveBuilder()
                 .match(GrantAccessToStoreMsg.class, this::onGrantAccessToStoreMsg)
                 .match(ActivateNodeMsg.class, this::onActivateNodeMessage)
-                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
+                .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(PartitionRequestMsg.class, this::onPartitionRequestMsg)
                 .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
+                .match(UpdateAllCompleteMsg.class, this::onUpdateAllCompleteMsg)
+                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .matchAny(msg -> stash())
                 .build();
     }
@@ -210,17 +207,25 @@ public class StoreNode extends AbstractActorWithStash {
      * @param msg the update message
      */
     private void onUpdateStoreNodeStatusMessage(UpdateStoreNodeStatusMsg msg) {
+        //discard the message if the update is older than the last one received by this node
+        if(msg.getUpdateID() < currentUpdateID) {
+            Logger.std.dlog("Received update with id less than this one. This shouldn't happen" +
+                    " since store manager does 1 update at a time");
+            return;
+        }
+        currentUpdateID = msg.getUpdateID();
 
         if(msg.getNodesOfPartition().size() != hashSpacePartition) {
             //TODO if dynamic partitions will be implemented
-            Logger.std.dlog("[WARNING] Partitions number is changed! Old is " +hashSpacePartition + ", new: " +
+            Logger.std.dlog("[WARNING] Partitions number is changed! Old is " + hashSpacePartition + ", new: " +
                     msg.getNodesOfPartition().size() +". This case is not yet managed!");
         }
 
+        getContext().become(inactive());
+
+
         //re-write the set of nodes in the system
         storeNodesSet = new HashSet<>();
-
-        nodesOfPartition = msg.getNodesOfPartition();
 
         for (int i = 0; i < msg.getNodesOfPartition().size(); i++) {
             //if this node is assigned to a partition to which wasn't assigned before, add that partition
@@ -230,16 +235,26 @@ public class StoreNode extends AbstractActorWithStash {
             }
             //else if this node is no longer assigned to a partition, remove it
             else if (!msg.getNodesOfPartition().get(i).contains(self()) && assignedPartitions.contains(i)) {
-                Logger.std.ilog("Node" +nodeNumber+ " removing partition " + i);
-                removePartitionAssignment(i);
+                Logger.std.ilog("Node" +nodeNumber+ " is marking partition " + i + " to be removed after update " +currentUpdateID);
+                partitionsToRemoveOnUpdateComplete.add(i);
             }
 
             //for each partition, assign to the new set of nodes all the nodes
             storeNodesSet.addAll(msg.getNodesOfPartition().get(i));
         }
 
-        Logger.std.ilog("Node"+nodeNumber+"'s new partitions: " +assignedPartitions +
-                "\n Full partition: " + toStringNodesOfPartition());
+        //update the new nodesOfPartition, after assignment
+        nodesOfPartition = msg.getNodesOfPartition();
+
+        //if no new partitions were added to this node, hence no partitions are required, the node is already
+        //finished with the update
+        if(partitionsRequired.isEmpty()) {
+            storeManager.tell(new UpdateStoreNodeCompletedMsg(currentUpdateID), self());
+        }
+
+
+        Logger.std.ilog("Node"+nodeNumber+"'s new partitions on update " +currentUpdateID+":"
+                +assignedPartitions +". full partition:\n" + toStringNodesOfPartition());
 
     }
 
@@ -250,6 +265,7 @@ public class StoreNode extends AbstractActorWithStash {
                 + "\nsize: " +msg.getNodesOfPartition().size());
         hashSpacePartition = msg.getNodesOfPartition().size();
         nodesOfPartition = msg.getNodesOfPartition();
+        currentUpdateID = msg.getUpdateID();
 
         //add all the actors in the lists to the set, and all the partitions assigned to this node
         for (int i = 0; i < nodesOfPartition.size(); i++) {
@@ -267,9 +283,10 @@ public class StoreNode extends AbstractActorWithStash {
         Logger.std.dlog("Final hashmap for Node" +nodeNumber+":\n" + toStringNodesOfPartition());
 
 
-        //if has to request data, request it and wait to become active
+        //if has to request data, request it and become inactive
         if(msg.mustRequestData()) {
             isInRequestingDataState = true;
+            getContext().become(inactive());
             partitionsRequired = new HashSet<>(assignedPartitions);
             for (Integer partition: assignedPartitions) {
                 if(nodesOfPartition.get(partition).get(0) != null && !nodesOfPartition.get(partition).get(0).equals(self()))
@@ -297,14 +314,18 @@ public class StoreNode extends AbstractActorWithStash {
         }
 
 
-        //if this node is the leader, answer with its data
-        if(nodesOfPartition.get(msg.getPartitionRequired()).get(0).compareTo(self()) == 0) {
+        //if this node is the leader or possibly it was since removed that partition in this update,
+        //answer with its data
+        if(nodesOfPartition.get(msg.getPartitionRequired()).get(0).compareTo(self()) == 0 ||
+                partitionsToRemoveOnUpdateComplete.contains(msg.getPartitionRequired())) {
             Logger.std.dlog("Leader of partition " + msg.getPartitionRequired()+ " received partition request, giving a copy of this data to " + sender());
             sender().tell(new PartitionRequestReplyMsg(msg.getPartitionRequired(),
                     dataPerPartition.get(msg.getPartitionRequired())), self());
         }
         //if this is not the leader for any reason, forward the request to the true leader
         else {
+            Logger.std.dlog("Partition request on Node"+nodeNumber+" made on wrong node. This" +
+                    " shouldn't happen");
             nodesOfPartition.get(msg.getPartitionRequired()).get(0).forward(msg, getContext());
         }
     }
@@ -319,17 +340,30 @@ public class StoreNode extends AbstractActorWithStash {
                 dataPerPartition.put(msg.getPartitionRequired(), msg.getPartitionData());
             }
 
-            //if all the partitions required are received, activate the node and unstash everything.
-            //if it was already active it does nothing
+            //if all the partitions required are received, notify the store manager
             if(partitionsRequired.isEmpty()) {
                 isInRequestingDataState = false;
-                Logger.std.dlog("Node"+nodeNumber+" got all the data needed. Activating the node");
-                getContext().become(active());
-                unstashAll();
+                Logger.std.dlog("Node"+nodeNumber+" got all the data needed. Activating the node and " +
+                        "notifying the storemanager");
+                storeManager.tell(new UpdateStoreNodeCompletedMsg(currentUpdateID), self());
             }
         } else {
             Logger.std.dlog("Node"+nodeNumber+" received a partition request reply not asked for!" +
                     " (partition:" +msg.getPartitionRequired()+", sender:" + sender());
+        }
+    }
+
+
+    private void onUpdateAllCompleteMsg(UpdateAllCompleteMsg msg) {
+        if(msg.getUpdateID() == currentUpdateID) {
+            //if another update is incoming, do nothing and wait for it
+            if(!msg.isAnotherUpdateIncoming()) {
+                getContext().become(active());
+                unstashAll();
+            }
+        } else {
+            Logger.std.dlog("Node"+nodeNumber+" received update-all-complete message with " +
+                    "id " + msg.getUpdateID() +" but current was " +currentUpdateID);
         }
     }
 
@@ -431,7 +465,7 @@ public class StoreNode extends AbstractActorWithStash {
                 //if is not leader but the put comes from the leader, then update data, and forward if there are
                 //replicas after this one, or reply to the leader if is the last replica
                 else if(nodesOfKey.get(0).equals(putMsg.sender())) {
-                    Logger.std.dlog("Node" +nodeNumber+ "is not leader, put request from leader");
+                    Logger.std.dlog("Node" +nodeNumber+ " is not leader, put request from leader");
                     //update data
                     insertData(putMsg, partition);
 
@@ -521,15 +555,21 @@ public class StoreNode extends AbstractActorWithStash {
     }
 
 
+    /**
+     * assign new partition and ask to the leader data for it.
+     * enter in requesting state.
+     */
     private void assignNewPartition(int partition) {
         dataPerPartition.put(partition, new HashMap<>());
         assignedPartitions.add(partition);
         //request the data
         isInRequestingDataState = true;
+        getContext().become(inactive());
         partitionsRequired.add(partition);
         nodesOfPartition.get(partition).get(0).tell(new PartitionRequestMsg(partition), self());
 
     }
+
 
     private void removePartitionAssignment(int partitionRemoved) {
         dataPerPartition.remove(partitionRemoved);

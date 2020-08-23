@@ -16,9 +16,12 @@ public class ActivateNodeMsg extends ServerMessage {
 
     private final boolean mustRequestData;
 
-    public ActivateNodeMsg(List<List<ActorRef>> nodesOfPartition,boolean mustRequestData) {
+    private final long updateID;
+
+    public ActivateNodeMsg(List<List<ActorRef>> nodesOfPartition,boolean mustRequestData, long updateID) {
         this.nodesOfPartition = nodesOfPartition;
         this.mustRequestData = mustRequestData;
+        this.updateID = updateID;
     }
 
     public List<List<ActorRef>> getNodesOfPartition() {
@@ -27,5 +30,9 @@ public class ActivateNodeMsg extends ServerMessage {
 
     public boolean mustRequestData() {
         return mustRequestData;
+    }
+
+    public long getUpdateID() {
+        return updateID;
     }
 }

@@ -1,9 +1,6 @@
 package it.polimi.middleware.server.actors;
 
-import akka.actor.AbstractActor;
-import akka.actor.ActorRef;
-import akka.actor.ActorSystem;
-import akka.actor.Props;
+import akka.actor.*;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
 import com.typesafe.config.Config;
@@ -27,11 +24,13 @@ import java.util.concurrent.CompletableFuture;
  * The node underlying the MasterNode. Manages everything conceiving the store: underlying nodes with their workers,
  * establish node's data hierarchy, to update values in order to be consistent, and forward messages to the correct node.
  */
-public class StoreManager extends AbstractActor {
+public class StoreManager extends AbstractActorWithStash {
     private final Cluster cluster = Cluster.get(getContext().system());
 
     //progressive number assigned to new nodes to identify themselves
     private int nodeNumber = 0;
+
+    private long updateID = 0;
 
     private boolean autoStart;
 
@@ -45,7 +44,7 @@ public class StoreManager extends AbstractActor {
     //too few reachable replicas remain, thus down some node or add some new node
     private final int minimumReachableDataReplicas;
 
-    private PartitionManager partitionManager;
+    private final PartitionManager partitionManager;
 
     @SuppressWarnings({"FieldMayBeFinal"})
     private int assignedNodesPerClient;
@@ -55,6 +54,19 @@ public class StoreManager extends AbstractActor {
     private final Random r;
 
     private final List<ActorRef> storeNodes;
+
+    /**
+     * A list containing all nodes currently updating for an update given by this store manager
+     */
+    private List<ActorRef> updatingNodes;
+
+    /**
+     * List of nodes waiting to be added to the system.
+     */
+    private final Set<ActorRef> nodesInJoinQueue;
+
+    private boolean isUpdateOngoing = false;
+
 
     private Map<ActorRef, Integer> nodeClientAmountMap;
 
@@ -71,6 +83,8 @@ public class StoreManager extends AbstractActor {
         //prepare the list of lists with the specified capacities:
         //external list is size of the partition of space, each sublist is size of the number of replicas
         storeNodes = new ArrayList<>();
+        updatingNodes = new ArrayList<>();
+        nodesInJoinQueue = new HashSet<>();
 
         r = new Random(System.currentTimeMillis());
         nodeClientAmountMap = new HashMap<>();
@@ -99,6 +113,7 @@ public class StoreManager extends AbstractActor {
                 .match(ClusterEvent.MemberDowned.class, this::onMemberDowned)
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
                 .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
+                .match(UpdateStoreNodeCompletedMsg.class, this::onUpdateStoreNodeCompletedMsg)
                 .match(RequestActivateMsg.class, this::onRequestActivateMsg)
                 .match(StartSystemMsg.class, this::onStartSystemMessage)
                 .build();
@@ -114,6 +129,10 @@ public class StoreManager extends AbstractActor {
         if(memberUp.member().hasRole("storenode")) {
             Logger.std.dlog("Sending grant access to this node");
             getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++, true), self());
+        }
+        //down the new member if is another storenode newer than this. It never happens
+        else if(memberUp.member().hasRole("storemanager") && cluster.selfMember().isOlderThan(memberUp.member())) {
+            cluster.down(memberUp.member().address());
         }
     }
 
@@ -132,7 +151,9 @@ public class StoreManager extends AbstractActor {
                         Logger.std.ilog("Not enough nodes left in the system! Spawning local node " +
                                 "to reach minimum data replicas!");
                         ActorRef newNode = spawnLocalNode();
-                        newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                        isUpdateOngoing = true;
+                        updatingNodes.add(newNode);
+                        newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
                     }
                 }
             }
@@ -140,9 +161,12 @@ public class StoreManager extends AbstractActor {
             //remove the node, notify all other nodes of new assignments
             if (storeNodes.remove(nodeToRemove)) {
                 Logger.std.dlog("Removed from store manager node " +nodeToRemove);
+                updateID++;
+                isUpdateOngoing = true;
+                updatingNodes.addAll(storeNodes);
                 for (ActorRef node :
                         storeNodes) {
-                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
                 }
             } else {
                 Logger.std.dlog("Tried to remove a node which was not in the store manager. memberAddress: " +md.member().address());
@@ -171,7 +195,7 @@ public class StoreManager extends AbstractActor {
                         for (int i = 0; i < missingNodes; i++) {
                             ActorRef newNode = spawnLocalNode();
                             newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber-1, false), self());
-                            newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                            newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
                         }
                     }
 
@@ -201,19 +225,34 @@ public class StoreManager extends AbstractActor {
 
     private void onRequestActivateMsg(RequestActivateMsg msg) {
         Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path());
+        //if an update is ongoing and someone wants to join, wait for update completion first.
+        // stash the message
+        if(isUpdateOngoing) {
+            Logger.std.dlog("Update is ongoing. Request activation was stashed");
+            nodesInJoinQueue.add(msg.getStoreNodeRef());
+            stash();
+            return;
+        }
+        //remove if present the node to the join queue
+        nodesInJoinQueue.remove(msg.getStoreNodeRef());
+
+        //add the node logically to the system
         partitionManager.addNode(msg.getStoreNodeRef());
         storeNodes.add(msg.getStoreNodeRef());
 
         //if system is running, adding it to the partition manager means updating every node possibly.
         //Notify every node of the new assignments and activate the one making this request
         if(partitionManager.isRunning()) {
+            updateID++;
+            isUpdateOngoing = true;
+            updatingNodes.addAll(storeNodes);
             for (ActorRef node :
                     storeNodes) {
                 if (node.equals(msg.getStoreNodeRef()))
-                    node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true), self());
+                    node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
                 else {
                     Logger.std.log(Logger.LogLevel.VERBOSE, "Sending update status to " + node);
-                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
                 }
             }
         }
@@ -222,7 +261,8 @@ public class StoreManager extends AbstractActor {
             try {
                 partitionManager.start();
                 sendSetupMessagesToStoreNodes();
-                Logger.std.ilog("System auto-started successfully");
+                Logger.std.ilog("System auto-started successfully. Partitions:\n"
+                        + partitionManager.toStringPartitionsOfNode());
                 getContext().parent().tell(new StartSystemReplyMsg(true,
                                 "System auto-started successfully"), self());
             } catch (NotEnoughNodesException nene) {
@@ -231,6 +271,40 @@ public class StoreManager extends AbstractActor {
             }
         }
     }
+
+
+    private void onUpdateStoreNodeCompletedMsg(UpdateStoreNodeCompletedMsg msg) {
+        if(isUpdateOngoing) {
+            updatingNodes.remove(sender());
+            //if no more nodes are left to update, notify to all that update is complete.
+            //if other nodes are in queue to be added, notify the nodes that another update is incoming
+            if(updatingNodes.isEmpty()) {
+                Logger.std.dlog("Update " + updateID + " is complete for all nodes. Another "
+                        +nodesInJoinQueue.size() + " updates are pending");
+                isUpdateOngoing = false;
+                if(nodesInJoinQueue.isEmpty()) {
+                    for (ActorRef node :
+                            storeNodes) {
+                        node.tell(new UpdateAllCompleteMsg(updateID, false), self());
+                    }
+                }
+                //if some nodes are in queue to join, notify all nodes that update is complete, another is incoming,
+                //and unstash an activate message
+                else {
+                    for (ActorRef node :
+                            storeNodes) {
+                        node.tell(new UpdateAllCompleteMsg(updateID, true), self());
+                    }
+                    unstash();
+                }
+
+            }
+        } else {
+            Logger.std.dlog("Received update-complete message from " + sender().path().address() +
+                    ", but no updates are ongoing. This shouldn't happen");
+        }
+    }
+
 
     private void onStartSystemMessage(StartSystemMsg msg) {
         //stop if already running
@@ -276,7 +350,7 @@ public class StoreManager extends AbstractActor {
     private void sendSetupMessagesToStoreNodes() {
         Logger.std.dlog("Sending setup messages to nodes. nodesOfPartitionList is:\n" + partitionManager.getNodesOfPartitionList());
         for (ActorRef node : storeNodes) {
-            node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), false), self());
+            node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), false, updateID), self());
         }
         Logger.std.dlog("Setup messages sent");
     }
@@ -335,9 +409,10 @@ public class StoreManager extends AbstractActor {
      * Update all the active nodes in the system with the routing table of partitions
      */
     private void updateAllNodes() {
+        updateID++;
         for (ActorRef node :
                 partitionManager.getActiveNodes()) {
-            node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList()), self());
+            node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
         }
     }
 
