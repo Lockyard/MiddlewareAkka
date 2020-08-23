@@ -2,7 +2,7 @@ package it.polimi.middleware.server.messages;
 
 public class StartSystemReplyMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123205L;
+    private static final long serialVersionUID = 881240900123205L;
 
     private final boolean success;
     private String description;

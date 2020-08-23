@@ -2,7 +2,7 @@ package it.polimi.middleware.server.messages;
 
 public class UpdateAllCompleteMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123223L;
+    private static final long serialVersionUID = 881240900123223L;
 
     private final long updateID;
 

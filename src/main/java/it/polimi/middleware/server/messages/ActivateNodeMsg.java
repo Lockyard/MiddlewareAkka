@@ -10,7 +10,7 @@ import java.util.List;
  * since the system is already live
  */
 public class ActivateNodeMsg extends ServerMessage {
-    private static final long serialVersionUID = 88124090000123200L;
+    private static final long serialVersionUID = 881240900123200L;
 
     private final List<List<ActorRef>> nodesOfPartition;
 

@@ -13,7 +13,7 @@ import java.util.List;
  */
 public class UpdateStoreNodeStatusMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123206L;
+    private static final long serialVersionUID = 881240900123206L;
 
     private final List<List<ActorRef>> nodesOfPartition;
 

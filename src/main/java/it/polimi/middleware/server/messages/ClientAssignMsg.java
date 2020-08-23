@@ -7,7 +7,7 @@ import akka.actor.ActorRef;
  */
 public class ClientAssignMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123201L;
+    private static final long serialVersionUID = 881240900123201L;
 
     private final long clientID;
     private final int nodesAssigned;

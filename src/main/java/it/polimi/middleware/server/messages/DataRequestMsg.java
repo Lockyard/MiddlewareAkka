@@ -5,7 +5,7 @@ package it.polimi.middleware.server.messages;
  */
 public class DataRequestMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123208L;
+    private static final long serialVersionUID = 881240900123208L;
 
     private final String key;
 

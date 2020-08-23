@@ -2,7 +2,7 @@ package it.polimi.middleware.server.messages;
 
 public class PartitionRequestMsg  extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123220L;
+    private static final long serialVersionUID = 881240900123220L;
 
     private final int partitionRequired;
 

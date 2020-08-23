@@ -8,7 +8,7 @@ import java.util.Set;
 
 public class PartitionRequestReplyMsg extends ServerMessage {
 
-    private static final long serialVersionUID = 88124090000123221L;
+    private static final long serialVersionUID = 881240900123221L;
 
     private final int partitionRequired;
 

@@ -7,7 +7,7 @@ import java.io.Serializable;
  */
 public class ReplyGetMsg extends ServiceMessage implements Serializable {
 
-    private static final long serialVersionUID = 77124090000123304L;
+    private static final long serialVersionUID = 771240900123304L;
 
     private final String content, key;
 

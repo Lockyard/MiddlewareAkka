@@ -5,7 +5,7 @@ import java.util.StringTokenizer;
 
 public class ReplyPutMsg extends ServiceMessage implements Serializable {
 
-    private static final long serialVersionUID = 77124090000123306L;
+    private static final long serialVersionUID = 771240900123306L;
 
     private final boolean success;
     private final String key, content;
