@@ -28,19 +28,6 @@ public class StoreNodeRunner {
         } else {
             startupStoreNodes(Arrays.asList(args));
         }
-
-        /*/
-        //Load config resource file and start the StoreNodeHost ActorSystem
-        final Config conf = ConfigFactory.load("conf/cluster.conf");
-
-        actorSystem = ActorSystem.create("StoreNodeHost", conf);
-
-        final Config storeConf = ConfigFactory.load("conf/store.conf");
-        stdTimeout = storeConf.getInt("store.connection.stdTimeout");
-
-
-        actorSystem.terminate();
-        //*/
     }
 
     private static void startupStoreNodes(List<String> ports) {
@@ -48,7 +35,7 @@ public class StoreNodeRunner {
             Logger.std.dlog("starting up node at port " + port);
             ActorSystem actorSystem = ActorSystem.create("ServerClusterSystem", setupStoreNodeConfig(port));
             //create the store node
-            ActorRef a = actorSystem.actorOf(StoreNode.props(ConfigFactory.load("conf/store.conf").getInt("store.connection.stdTimeout")), "storenode");
+            ActorRef a = actorSystem.actorOf(StoreNode.props(), "storenode");
             Logger.std.dlog("new node path: " +a.path());
         });
     }

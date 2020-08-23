@@ -8,6 +8,8 @@ import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigValueFactory;
 import it.polimi.middleware.messages.GreetingMsg;
 import it.polimi.middleware.messages.GreetingReplyMsg;
+import it.polimi.middleware.messages.RequestNewActorMsg;
+import it.polimi.middleware.messages.RequestNewActorReplyMsg;
 import it.polimi.middleware.server.exceptions.NotEnoughNodesException;
 import it.polimi.middleware.server.management.PartitionManager;
 import it.polimi.middleware.server.messages.*;
@@ -32,7 +34,7 @@ public class StoreManager extends AbstractActorWithStash {
 
     private long updateID = 0;
 
-    private boolean autoStart;
+    private final boolean autoStart;
 
     //In how many partitions the key space is divided
     @SuppressWarnings({"FieldMayBeFinal"})
@@ -51,14 +53,12 @@ public class StoreManager extends AbstractActorWithStash {
 
     private final Duration timeout;
 
-    private final Random r;
-
     private final List<ActorRef> storeNodes;
 
     /**
      * A list containing all nodes currently updating for an update given by this store manager
      */
-    private List<ActorRef> updatingNodes;
+    private final List<ActorRef> updatingNodes;
 
     /**
      * List of nodes waiting to be added to the system.
@@ -68,7 +68,7 @@ public class StoreManager extends AbstractActorWithStash {
     private boolean isUpdateOngoing = false;
 
 
-    private Map<ActorRef, Integer> nodeClientAmountMap;
+    private final Map<ActorRef, Integer> nodeClientAmountMap;
 
     public StoreManager() {
         //load from config file how much to divide hash space and how many replicas of data must be active
@@ -86,7 +86,6 @@ public class StoreManager extends AbstractActorWithStash {
         updatingNodes = new ArrayList<>();
         nodesInJoinQueue = new HashSet<>();
 
-        r = new Random(System.currentTimeMillis());
         nodeClientAmountMap = new HashMap<>();
         partitionManager = new PartitionManager(hashSpacePartition, minimumDataReplicas);
     }
@@ -109,6 +108,8 @@ public class StoreManager extends AbstractActorWithStash {
     public Receive createReceive() {
         return receiveBuilder()
                 .match(GreetingMsg.class, this::onGreetingMessage)
+                .match(RequestNewActorMsg.class, this::onRequestNewActorMsg)
+                .match(NodeLoadOfClientsMsg.class, this::onNodeLoadOfClientsMsg)
                 .match(ClusterEvent.MemberUp.class, this::onMemberUp)
                 .match(ClusterEvent.MemberDowned.class, this::onMemberDowned)
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
@@ -160,6 +161,7 @@ public class StoreManager extends AbstractActorWithStash {
 
             //remove the node, notify all other nodes of new assignments
             if (storeNodes.remove(nodeToRemove)) {
+                nodeClientAmountMap.remove(nodeToRemove);
                 Logger.std.dlog("Removed from store manager node " +nodeToRemove);
                 updateID++;
                 isUpdateOngoing = true;
@@ -257,7 +259,7 @@ public class StoreManager extends AbstractActorWithStash {
             }
         }
         //if is not running but autostart is on check if the system can start
-        else if(partitionManager.canStart()) {
+        else if(partitionManager.canStart() && autoStart) {
             try {
                 partitionManager.start();
                 sendSetupMessagesToStoreNodes();
@@ -377,15 +379,37 @@ public class StoreManager extends AbstractActorWithStash {
             storeNodes.sort(Comparator.comparingInt(this::clientLoadOfNode));
 
             for (int i = 0; i < assignedNodes; i++) {
-                CompletableFuture<Object> future = ask(storeNodes.get(i), new ClientAssignMsg(uid, assignedNodes), timeout).toCompletableFuture();
-                incrementClientLoadTo(storeNodes.get(i));
+                CompletableFuture<Object> future = ask(storeNodes.get(i), new ClientAssignMsg(uid, assignedNodes, sender()), timeout).toCompletableFuture();
                 pipe(future, getContext().dispatcher()).to(sender());
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
 
 
+    private void onRequestNewActorMsg(RequestNewActorMsg msg) {
+        //sort by load of nodes in terms of client assigned, and assign to the least busy ones the new client
+        storeNodes.sort(Comparator.comparingInt(this::clientLoadOfNode));
+
+        for (ActorRef node : storeNodes) {
+            //if is not a node the client already have, give it, increment load and return
+            if (!msg.getActorsAlreadyAssigned().contains(node)) {
+                CompletableFuture<Object> future = ask(node, new ClientAssignMsg(msg.getClientID(), sender()), timeout).toCompletableFuture();
+                pipe(future, getContext().dispatcher()).to(sender());
+            }
+        }
+    }
+
+
+    /**
+     * When a node tells its load changed, update the map
+     * @param msg
+     */
+    private void onNodeLoadOfClientsMsg(NodeLoadOfClientsMsg msg) {
+        Logger.std.dlog(sender().path().address()+" notified that its client" +
+                " load now is " +msg.getClientLoad());
+        nodeClientAmountMap.put(sender(), msg.getClientLoad());
     }
 
 
@@ -398,7 +422,7 @@ public class StoreManager extends AbstractActorWithStash {
 
         ActorSystem as = ActorSystem.create("ServerClusterSystem", conf);
         //create the new storeNode
-        ActorRef newNode = as.actorOf(StoreNode.props(timeout.getSeconds()), "Node"+ (nodeNumber) + "L");
+        ActorRef newNode = as.actorOf(StoreNode.props(), "Node"+ (nodeNumber) + "L");
         storeNodes.add(newNode);
         partitionManager.addNode(newNode);
         newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber++, false), self());
@@ -425,12 +449,6 @@ public class StoreManager extends AbstractActorWithStash {
     private int clientLoadOfNode(ActorRef node) {
         nodeClientAmountMap.putIfAbsent(node, 0);
         return nodeClientAmountMap.get(node);
-    }
-
-
-
-    private void incrementClientLoadTo(ActorRef node) {
-        nodeClientAmountMap.put(node, nodeClientAmountMap.get(node)+1);
     }
 
 

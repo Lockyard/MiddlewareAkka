@@ -4,8 +4,11 @@ package it.polimi.middleware.server.actors;
 import akka.actor.AbstractActorWithStash;
 import akka.actor.ActorRef;
 import akka.actor.Props;
+import akka.actor.Terminated;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
+import com.typesafe.config.Config;
+import com.typesafe.config.ConfigFactory;
 import it.polimi.middleware.messages.*;
 import it.polimi.middleware.server.messages.*;
 import it.polimi.middleware.server.store.ValueData;
@@ -31,10 +34,10 @@ public class StoreNode extends AbstractActorWithStash {
     private long currentUpdateID = 0;
 
     private Duration timeout;
-    /**
-     * In seconds, the timeout for when requesting data to other StoreNodes. Default is 5
-     */
-    private static long TIMEOUT_ON_REQUEST_DATA = 5;
+
+    private int clientThresholdNotification;
+
+    private int lastClientNotificationAmount = 0;
 
     private int hashSpacePartition;
 
@@ -43,7 +46,7 @@ public class StoreNode extends AbstractActorWithStash {
     /**
      * The main data contained inside this StoreNode
      */
-    private HashMap<Integer, HashMap<String, ValueData>> dataPerPartition;
+    private final HashMap<Integer, HashMap<String, ValueData>> dataPerPartition;
 
     /**
      * This "map" states, for each partition, which nodes have data of that partition, and in which order
@@ -82,6 +85,11 @@ public class StoreNode extends AbstractActorWithStash {
      */
     private final Set<Long> assignedClientIDs;
 
+    /**
+     * the map mapping a client (actor) to its ID. Contains all clients served by this node
+     */
+    private final Map<ActorRef, Long> clientToIDMap;
+
     //round robin index
     private int rrIndex=0;
 
@@ -92,9 +100,12 @@ public class StoreNode extends AbstractActorWithStash {
 
     /**
      * New StoreNode with the specified hashPartition.
-     * @param timeoutSeconds the timeout in seconds when asking to other nodes
      */
-    public StoreNode(long timeoutSeconds) {
+    public StoreNode() {
+
+        Config conf = ConfigFactory.load("conf/store.conf");
+        clientThresholdNotification = conf.getInt("store.node.clientThresholdNotification");
+        timeout = Duration.ofSeconds(conf.getInt("store.connection.stdTimeout"));
 
         dataPerPartition = new HashMap<>();
         nodesOfPartition = new ArrayList<>();
@@ -105,9 +116,7 @@ public class StoreNode extends AbstractActorWithStash {
         unreachableNodes = new HashSet<>();
         partitionsRequired = new HashSet<>();
         partitionsToRemoveOnUpdateComplete = new HashSet<>();
-
-
-        timeout = Duration.ofSeconds(timeoutSeconds);
+        clientToIDMap = new HashMap<>();
     }
 
 
@@ -149,6 +158,7 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
                 .match(UpdateAllCompleteMsg.class, this::onUpdateAllCompleteMsg)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
+                .match(Terminated.class, this::onTerminatedClient)
                 .matchAny(msg -> stash())
                 .build();
     }
@@ -164,6 +174,7 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
                 .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
+                .match(Terminated.class, this::onTerminatedClient)
                 .matchAny(this::onUnknownMessage)
                 .build();
     }
@@ -499,9 +510,29 @@ public class StoreNode extends AbstractActorWithStash {
         
     }
 
+    /**
+     * Client assign can happen when a client shows up (is not single assignment) or when a client request
+     * a new node. In this last case answer with a different message
+     * @param msg the message
+     */
     private void onClientAssignMessage(ClientAssignMsg msg) {
         assignedClientIDs.add(msg.getClientID());
-        sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
+        clientToIDMap.put(msg.getClientRef(), msg.getClientID());
+        getContext().watch(msg.getClientRef());
+
+        if(msg.isSingleAssignment())
+            sender().tell(new RequestNewActorReplyMsg(self()), self());
+        else
+            sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), msg.getClientID()), self());
+
+        notifyStoreManagerIfClientLoadChangedEnough();
+    }
+
+    private void onTerminatedClient(Terminated t) {
+        //remove the actorRef and the id, then notify the store manager if the load has changed significantly
+        assignedClientIDs.remove(clientToIDMap.remove(t.actor()));
+
+        notifyStoreManagerIfClientLoadChangedEnough();
     }
 
 
@@ -513,12 +544,21 @@ public class StoreNode extends AbstractActorWithStash {
 
 
 
-    public static Props props(long timeoutSeconds) {
-        return Props.create(StoreNode.class, timeoutSeconds);
+    public static Props props() {
+        return Props.create(StoreNode.class);
     }
 
 
     ///Other private methods
+
+    private void notifyStoreManagerIfClientLoadChangedEnough() {
+        //if the amount of client shifted too much from last notification, notify the store manager
+        if(assignedClientIDs.size() == lastClientNotificationAmount + clientThresholdNotification ||
+                assignedClientIDs.size() == lastClientNotificationAmount - clientThresholdNotification) {
+            lastClientNotificationAmount = assignedClientIDs.size();
+            storeManager.tell(new NodeLoadOfClientsMsg(assignedClientIDs.size()), self());
+        }
+    }
 
     private int partitionOf(String key) {
         return key.hashCode() % hashSpacePartition;
@@ -617,10 +657,5 @@ public class StoreNode extends AbstractActorWithStash {
 
     public void setTimeout(int seconds) {
         timeout = Duration.ofSeconds(seconds);
-    }
-
-    ///////STATICS
-    public static void setTimeoutOnRequestData(long timeout) {
-        TIMEOUT_ON_REQUEST_DATA = timeout;
     }
 }

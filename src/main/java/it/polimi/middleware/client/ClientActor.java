@@ -1,9 +1,6 @@
 package it.polimi.middleware.client;
 
-import akka.actor.AbstractActor;
-import akka.actor.ActorRef;
-import akka.actor.ActorSelection;
-import akka.actor.Props;
+import akka.actor.*;
 import it.polimi.middleware.messages.*;
 import it.polimi.middleware.util.Logger;
 
@@ -14,7 +11,7 @@ import java.util.List;
  * Actor which is used by the client app to communicate with the server.
  * Tells and receive messages to/from it.
  */
-public class ClientActor extends AbstractActor {
+public class ClientActor extends AbstractActorWithStash {
 
     private ActorSelection server;
     private String serverAddress;
@@ -23,13 +20,14 @@ public class ClientActor extends AbstractActor {
     /**
      * The only nodes this client can use to communicate to the server
      */
-    private List<ActorRef> accessNodes;
+    private final List<ActorRef> accessNodes;
     //index used to do round-robin on the accessNodes
-    private int i = 0;
+    private int rrIndex = 0;
 
 
     public ClientActor(String serverAddress) {
         this.serverAddress = serverAddress;
+        accessNodes = new ArrayList<>();
     }
 
     @Override
@@ -51,43 +49,69 @@ public class ClientActor extends AbstractActor {
                 //greetings and reply
                 .match(GreetingMsg.class, msg -> server.tell(msg, self()))
                 .match(GreetingReplyMsg.class, this::onGreetingReplyMessage)
+                //in case of access nodes terminated and new assigned
+                .match(RequestNewActorReplyMsg.class, this::onRequestNewActorReplyMsg)
+                .match(Terminated.class, this::onTerminatedAccessNode)
                 .build();
     }
 
 
     private void onGetMsg(GetMsg msg) {
-        Logger.std.dlog("sending get message to " + accessNodes.get(i).path().address());
+        if(accessNodes.isEmpty()) {
+            Logger.std.dlog("Client doesn't have at the moment any access node. Stashing request");
+            stash();
+            return;
+        }
+        Logger.std.dlog("sending get message to " + accessNodes.get(rrIndex).path().address());
         msg.setClientID(clientID);
         msg.setSender(self());
-        accessNodes.get(i).tell(msg, self());
+        accessNodes.get(rrIndex).tell(msg, self());
         roundRobin();
     }
 
     private void onPutMsg(PutMsg msg) {
-        Logger.std.dlog("sending put message to " + accessNodes.get(i).path().address());
+        if(accessNodes.isEmpty()) {
+            Logger.std.dlog("Client doesn't have at the moment any access node. Stashing request");
+            stash();
+            return;
+        }
+        Logger.std.dlog("sending put message to " + accessNodes.get(rrIndex).path().address());
         msg.setClientID(clientID);
         msg.setSender(self());
-        accessNodes.get(i).tell(msg, self());
+        accessNodes.get(rrIndex).tell(msg, self());
         roundRobin();
     }
 
     private void roundRobin() {
-        i = (i+1) % accessNodes.size();
+        rrIndex = (rrIndex +1) % accessNodes.size();
     }
 
+    //if greeted with success, add the actor and watch it
     private void onGreetingReplyMessage(GreetingReplyMsg msg) {
         Logger.std.dlog("GreetingReply received");
         if(msg.isSuccessful()) {
             isConnected = true;
             clientID = msg.getClientID();
-            if(accessNodes == null) {
-                accessNodes = new ArrayList<>(msg.getTotalAssignedActors());
-            }
             accessNodes.add(msg.getAssignedActor());
+            getContext().watch(msg.getAssignedActor());
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + msg.getAssignedActor().path().address()+")" +
                     " , " + accessNodes.size() + "/" + msg.getTotalAssignedActors());
         } else {
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Greeting with server failed [" + msg.getDescription()+"]");
+        }
+    }
+
+    private void onTerminatedAccessNode(Terminated t) {
+        //remove it, if actually removed ask to the server another actor assignment
+        if(accessNodes.remove(t.actor())) {
+            server.tell(new RequestNewActorMsg(clientID, new ArrayList<>(accessNodes)), self());
+        }
+    }
+
+    private void onRequestNewActorReplyMsg(RequestNewActorReplyMsg msg) {
+        accessNodes.add(msg.getAssignedActor());
+        if(accessNodes.size()>0) {
+            unstashAll();
         }
     }
 

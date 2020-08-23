@@ -6,6 +6,7 @@ import akka.actor.Props;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
 import it.polimi.middleware.messages.GreetingMsg;
+import it.polimi.middleware.messages.RequestNewActorMsg;
 import it.polimi.middleware.messages.ServiceMessage;
 import it.polimi.middleware.server.messages.StartSystemMsg;
 import it.polimi.middleware.server.messages.StartSystemReplyMsg;
@@ -35,6 +36,7 @@ public class MasterNode extends AbstractActor {
         return receiveBuilder()
                 //forward service messages to the storeManager
                 .match(GreetingMsg.class, msg -> storeManager.forward(msg, getContext()))
+                .match(RequestNewActorMsg.class, msg -> storeManager.forward(msg, getContext()))
                 .match(StartSystemMsg.class, msg -> storeManager.tell(msg, self()))
                 .match(StartSystemReplyMsg.class, this::onStartSystemReplyMsg)
                 .build();
