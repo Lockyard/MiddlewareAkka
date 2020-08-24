@@ -14,18 +14,37 @@ public class GetMsg extends ServiceMessage implements Serializable {
      */
     private static final long serialVersionUID = 771240900123300L;
 
+    private static final int DEFAULT_ALIVE_STEPS = 64;
+    //for how many passages of message at most this message will remain alive
+    private int aliveSteps;
+
     private final String key;
 
     private long clientID = 0;
 
     private ActorRef sender;
 
+    /**
+     * Id of the operation of a user for a given partition (the partition of the key)
+     */
+    private long clientOpID;
+
     public GetMsg(String key) {
         this.key = key;
+        aliveSteps = DEFAULT_ALIVE_STEPS;
     }
 
     public final String getKey() {
         return key;
+    }
+
+    /**
+     * Reduce the alive steps of this message
+     * @return true if it has finished the alive steps, false if is still alive
+     */
+    public boolean reduceAliveSteps() {
+        aliveSteps--;
+        return aliveSteps <= 0;
     }
 
     public void setClientID(long clientID) {
@@ -42,6 +61,14 @@ public class GetMsg extends ServiceMessage implements Serializable {
 
     public ActorRef sender() {
         return sender;
+    }
+
+    public void setClientOpID(long clientOpID) {
+        this.clientOpID = clientOpID;
+    }
+
+    public long getClientOpID() {
+        return clientOpID;
     }
 
     @Override

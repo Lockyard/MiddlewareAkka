@@ -4,6 +4,7 @@ import it.polimi.middleware.server.store.ValueData;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 public class PartitionRequestReplyMsg extends ServerMessage {
@@ -14,9 +15,16 @@ public class PartitionRequestReplyMsg extends ServerMessage {
 
     private final HashMap<String, ValueData> partitionData;
 
-    public PartitionRequestReplyMsg(int partitionRequired, HashMap<String, ValueData> partitionData) {
+    private final Map<Long, Long> clientToOpIDMap;
+
+    private final long updateID;
+
+    public PartitionRequestReplyMsg(int partitionRequired, HashMap<String, ValueData> partitionData,
+                                    Map<Long, Long> clientToOpIDMap, long updateID) {
         this.partitionRequired = partitionRequired;
         this.partitionData = partitionData;
+        this.clientToOpIDMap = clientToOpIDMap;
+        this.updateID = updateID;
     }
 
     public int getPartitionRequired() {
@@ -25,5 +33,13 @@ public class PartitionRequestReplyMsg extends ServerMessage {
 
     public HashMap<String, ValueData> getPartitionData() {
         return partitionData;
+    }
+
+    public Map<Long, Long> getClientToOpIDMap() {
+        return clientToOpIDMap;
+    }
+
+    public long getUpdateID() {
+        return updateID;
     }
 }

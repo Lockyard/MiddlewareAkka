@@ -80,6 +80,17 @@ public class ValueData implements Serializable {
     }
 
     /**
+     * Update the value and increment the newness by 1
+     * @param newValue the new value
+     * @return the current newness
+     */
+    public long updateOnce(String newValue) {
+        this.value = newValue;
+        newness++;
+        return newness;
+    }
+
+    /**
      * Get the value of this valueData
      * @return the String contained
      */

@@ -5,6 +5,7 @@ import it.polimi.middleware.messages.*;
 import it.polimi.middleware.util.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -21,13 +22,23 @@ public class ClientActor extends AbstractActorWithStash {
      * The only nodes this client can use to communicate to the server
      */
     private final List<ActorRef> accessNodes;
+
     //index used to do round-robin on the accessNodes
     private int rrIndex = 0;
+
+    /**
+     * A map where key is the partition and value is the operation id for that partition.
+     * Is a progressive number increasing by 1 for each put.
+     */
+    private HashMap<Integer, Integer> opIDPerPartition;
+
+    private int numOfPartitions;
 
 
     public ClientActor(String serverAddress) {
         this.serverAddress = serverAddress;
         accessNodes = new ArrayList<>();
+        opIDPerPartition = new HashMap<>();
     }
 
     @Override
@@ -64,6 +75,7 @@ public class ClientActor extends AbstractActorWithStash {
         }
         Logger.std.dlog("sending get message to " + accessNodes.get(rrIndex).path().address());
         msg.setClientID(clientID);
+        msg.setClientOpID(getOpIdForKey(msg.getKey()));
         msg.setSender(self());
         accessNodes.get(rrIndex).tell(msg, self());
         roundRobin();
@@ -75,9 +87,12 @@ public class ClientActor extends AbstractActorWithStash {
             stash();
             return;
         }
-        Logger.std.dlog("sending put message to " + accessNodes.get(rrIndex).path().address());
+
         msg.setClientID(clientID);
         msg.setSender(self());
+        msg.setClientOpID(incrementAndGetOpIdForKey(msg.getKey()));
+        Logger.std.dlog("sending put message to " + accessNodes.get(rrIndex).path().address() +
+                " (opID:" + msg.getClientOpID()+")");
         accessNodes.get(rrIndex).tell(msg, self());
         roundRobin();
     }
@@ -94,6 +109,11 @@ public class ClientActor extends AbstractActorWithStash {
             clientID = msg.getClientID();
             accessNodes.add(msg.getAssignedActor());
             getContext().watch(msg.getAssignedActor());
+
+            numOfPartitions = msg.getNumOfPartitions();
+            for (int i = 0; i < numOfPartitions; i++) {
+                opIDPerPartition.put(i, 0);
+            }
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + msg.getAssignedActor().path().address()+")" +
                     " , " + accessNodes.size() + "/" + msg.getTotalAssignedActors());
         } else {
@@ -113,6 +133,17 @@ public class ClientActor extends AbstractActorWithStash {
         if(accessNodes.size()>0) {
             unstashAll();
         }
+    }
+
+
+    private int getOpIdForKey(String key) {
+        return opIDPerPartition.get(key.hashCode() % numOfPartitions);
+    }
+
+    private int incrementAndGetOpIdForKey(String key) {
+        int k = key.hashCode() % numOfPartitions;
+        opIDPerPartition.put(k, opIDPerPartition.get(k) + 1);
+        return opIDPerPartition.get(k);
     }
 
 

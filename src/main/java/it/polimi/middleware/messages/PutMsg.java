@@ -13,7 +13,7 @@ public class PutMsg extends ServiceMessage implements Serializable {
      */
     private static final long serialVersionUID = 771240900123303L;
 
-    private static final byte DEFAULT_ALIVE_STEPS = 64;
+    private static final int DEFAULT_ALIVE_STEPS = 64;
 
     private final String key;
     private final String val;
@@ -23,11 +23,14 @@ public class PutMsg extends ServiceMessage implements Serializable {
     private ActorRef sender;
 
     //for how many passages of message at most this message will remain alive
-    private byte aliveSteps;
-    /**
-     * Used by the server to recognize order of incoming messages. Needed to keep consistency from client's point of view
-     */
+    private int aliveSteps;
+
     private long newness;
+
+    /**
+     * Id of the operation of a user for a given partition (the partition of the key)
+     */
+    private long clientOpID = 0;
 
 
     /**
@@ -39,7 +42,6 @@ public class PutMsg extends ServiceMessage implements Serializable {
         this.key = key;
         this.val = val;
         //default newness is 0
-        newness = 0;
         sender = ActorRef.noSender();
         aliveSteps = DEFAULT_ALIVE_STEPS;
     }
@@ -53,10 +55,6 @@ public class PutMsg extends ServiceMessage implements Serializable {
     public boolean reduceAliveSteps() {
         aliveSteps--;
         return aliveSteps <= 0;
-    }
-
-    public byte getAliveSteps() {
-        return aliveSteps;
     }
 
     //getters, setters
@@ -77,12 +75,12 @@ public class PutMsg extends ServiceMessage implements Serializable {
         return clientID;
     }
 
-    public void setNewness(long newness) {
-        this.newness = newness;
+    public void setClientOpID(long clientOpID) {
+        this.clientOpID = clientOpID;
     }
 
-    public long getNewness() {
-        return newness;
+    public long getClientOpID() {
+        return clientOpID;
     }
 
     public void setSender(ActorRef sender) {
@@ -93,9 +91,16 @@ public class PutMsg extends ServiceMessage implements Serializable {
         return sender;
     }
 
+    public void setNewness(long newness) {
+        this.newness = newness;
+    }
+
+    public long getNewness() {
+        return newness;
+    }
 
     @Override
     public String toString() {
-        return "PutMsg[Key:" + key + ", Value:" + val + ", Newness:" + newness + "]";
+        return "PutMsg[Key:" + key + ", Value:" + val + ", Newness:" + clientOpID + "]";
     }
 }

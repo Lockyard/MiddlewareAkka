@@ -6,11 +6,18 @@ public class PartitionRequestMsg  extends ServerMessage {
 
     private final int partitionRequired;
 
-    public PartitionRequestMsg(int partitionRequired) {
+    private final long updateID;
+
+    public PartitionRequestMsg(int partitionRequired, long updateID) {
         this.partitionRequired = partitionRequired;
+        this.updateID = updateID;
     }
 
     public int getPartitionRequired() {
         return partitionRequired;
+    }
+
+    public long getUpdateID() {
+        return updateID;
     }
 }

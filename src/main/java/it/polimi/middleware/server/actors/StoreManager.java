@@ -128,7 +128,7 @@ public class StoreManager extends AbstractActorWithStash {
     private void onMemberUp(ClusterEvent.MemberUp memberUp) {
         Logger.std.dlog("Member is up: " + memberUp.member());
         if(memberUp.member().hasRole("storenode")) {
-            Logger.std.dlog("Sending grant access to this node");
+            Logger.std.dlog("Node"+nodeNumber+" will be " +memberUp.member().address());
             getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++, true), self());
         }
         //down the new member if is another storenode newer than this. It never happens
@@ -161,6 +161,7 @@ public class StoreManager extends AbstractActorWithStash {
 
             //remove the node, notify all other nodes of new assignments
             if (storeNodes.remove(nodeToRemove)) {
+                updatingNodes.remove(nodeToRemove);
                 nodeClientAmountMap.remove(nodeToRemove);
                 Logger.std.dlog("Removed from store manager node " +nodeToRemove);
                 updateID++;
@@ -264,7 +265,8 @@ public class StoreManager extends AbstractActorWithStash {
                 partitionManager.start();
                 sendSetupMessagesToStoreNodes();
                 Logger.std.ilog("System auto-started successfully. Partitions:\n"
-                        + partitionManager.toStringPartitionsOfNode());
+                        + partitionManager.toStringPartitionsOfNode() +"\n"
+                        + partitionManager.toStringNodesOfPartition());
                 getContext().parent().tell(new StartSystemReplyMsg(true,
                                 "System auto-started successfully"), self());
             } catch (NotEnoughNodesException nene) {
@@ -277,30 +279,35 @@ public class StoreManager extends AbstractActorWithStash {
 
     private void onUpdateStoreNodeCompletedMsg(UpdateStoreNodeCompletedMsg msg) {
         if(isUpdateOngoing) {
-            updatingNodes.remove(sender());
-            //if no more nodes are left to update, notify to all that update is complete.
-            //if other nodes are in queue to be added, notify the nodes that another update is incoming
-            if(updatingNodes.isEmpty()) {
-                Logger.std.dlog("Update " + updateID + " is complete for all nodes. Another "
-                        +nodesInJoinQueue.size() + " updates are pending");
-                isUpdateOngoing = false;
-                if(nodesInJoinQueue.isEmpty()) {
-                    for (ActorRef node :
-                            storeNodes) {
-                        node.tell(new UpdateAllCompleteMsg(updateID, false), self());
+            if(msg.getUpdateID() == updateID) {
+                updatingNodes.remove(sender());
+                Logger.std.dlog("Update received from " +sender().path().address() +", remaining: " +
+                        updatingNodes.size());
+                //if no more nodes are left to update, notify to all that update is complete.
+                //if other nodes are in queue to be added, notify the nodes that another update is incoming
+                if(updatingNodes.isEmpty()) {
+                    Logger.std.dlog("Update " + updateID + " is complete for all nodes. Another "
+                            +nodesInJoinQueue.size() + " updates are pending");
+                    isUpdateOngoing = false;
+                    if(nodesInJoinQueue.isEmpty()) {
+                        for (ActorRef node :
+                                storeNodes) {
+                            node.tell(new UpdateAllCompleteMsg(updateID, false), self());
+                        }
                     }
-                }
-                //if some nodes are in queue to join, notify all nodes that update is complete, another is incoming,
-                //and unstash an activate message
-                else {
-                    for (ActorRef node :
-                            storeNodes) {
-                        node.tell(new UpdateAllCompleteMsg(updateID, true), self());
+                    //if some nodes are in queue to join, notify all nodes that update is complete, another is incoming,
+                    //and unstash an activate message
+                    else {
+                        for (ActorRef node :
+                                storeNodes) {
+                            node.tell(new UpdateAllCompleteMsg(updateID, true), self());
+                        }
+                        unstash();
                     }
-                    unstash();
-                }
 
-            }
+                }
+            } //if update id is different, discard this message
+
         } else {
             Logger.std.dlog("Received update-complete message from " + sender().path().address() +
                     ", but no updates are ongoing. This shouldn't happen");

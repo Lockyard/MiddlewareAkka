@@ -10,10 +10,13 @@ public class ReplyPutMsg extends ServiceMessage implements Serializable {
     private final boolean success;
     private final String key, content;
 
-    public ReplyPutMsg(String key, String content, boolean success) {
+    private final long clientOpID;
+
+    public ReplyPutMsg(String key, String content, long clientOpID, boolean success) {
         this.key = key;
         this.content = content;
         this.success = success;
+        this.clientOpID = clientOpID;
     }
 
     public boolean success() {
@@ -29,6 +32,6 @@ public class ReplyPutMsg extends ServiceMessage implements Serializable {
     }
 
     public String toString() {
-        return "ReplyPutMsg[K:"+key+", V:" + content + ", " + (success ? "OK]" : "FAILED]");
+        return "ReplyPutMsg[K:"+key+", V:" + content + ", opid: " +clientOpID + (success ? ", OK]" : ", FAILED]");
     }
 }
