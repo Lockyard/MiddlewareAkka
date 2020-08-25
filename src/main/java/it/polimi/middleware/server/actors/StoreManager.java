@@ -163,7 +163,8 @@ public class StoreManager extends AbstractActorWithStash {
             if (storeNodes.remove(nodeToRemove)) {
                 updatingNodes.remove(nodeToRemove);
                 nodeClientAmountMap.remove(nodeToRemove);
-                Logger.std.dlog("Removed from store manager node " +nodeToRemove);
+                Logger.std.dlog("Removed from store manager node " +nodeToRemove +
+                        "\nstoreNodes: " +storeNodes + "\nupdatingNodes:"+updatingNodes);
                 updateID++;
                 isUpdateOngoing = true;
                 updatingNodes.addAll(storeNodes);
@@ -180,6 +181,10 @@ public class StoreManager extends AbstractActorWithStash {
     private void onUnreachableMember(ClusterEvent.UnreachableMember um) {
         Logger.std.ilog("Detected unreachable member: " +um.member().address());
 
+        cluster.down(um.member().address());
+        if(true)
+            return;
+
         boolean markedUnreachable = false;
         if(um.member().hasRole("storenode")) {
             for (ActorRef node :
@@ -188,6 +193,7 @@ public class StoreManager extends AbstractActorWithStash {
                     Logger.std.dlog("Found the unreachable member in the storeNodes");
 
                     partitionManager.markUnreachable(node);
+                    updatingNodes.remove(node);
                     markedUnreachable = true;
 
                     //if too few reachable partition replicas remain, remove unreachable nodes until there are enough reachable
@@ -209,7 +215,6 @@ public class StoreManager extends AbstractActorWithStash {
         //if some node were marked as unreachable something changed, tell to all other nodes
         if(markedUnreachable)
             updateAllNodes();
-
     }
 
 

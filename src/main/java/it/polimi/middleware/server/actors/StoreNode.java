@@ -238,6 +238,8 @@ public class StoreNode extends AbstractActorWithStash {
         }
         currentUpdateID = msg.getUpdateID();
 
+        isInRequestingDataState = true;
+
         getContext().become(inactive());
 
         Set<Integer> partitionsToExcludeWhenRequiringUpdate = new HashSet<>();
@@ -276,9 +278,10 @@ public class StoreNode extends AbstractActorWithStash {
         //ask for a check of consistency with data
         for (Integer partition :
                 assignedPartitions) {
-            if (!partitionsToExcludeWhenRequiringUpdate.contains(partition) &&
-                    nodesOfPartition.get(partition).get(0).compareTo(self())!=0) {
+            if (!partitionsToExcludeWhenRequiringUpdate.contains(partition)) {
                 partitionsRequired.add(partition);
+                Logger.std.dlog("Node"+nodeNumber+" sending check consistency for partition " + partition +
+                        " to " + nodesOfPartition.get(partition).get(0).path().address());
                 nodesOfPartition.get(partition).get(0).tell(
                         new CheckDataConsistencyMsg(partition, updateValuePerPartition.get(partition), currentUpdateID), self());
             }
@@ -286,6 +289,15 @@ public class StoreNode extends AbstractActorWithStash {
 
         //update the new nodesOfPartition, after assignment
         nodesOfPartition = msg.getNodesOfPartition();
+
+        //if at the end of the update no partitions are required, report to the store manager that update for
+        //this node is ended
+        if(partitionsRequired.isEmpty()) {
+            Logger.std.dlog("Node " + nodeNumber + " sending on update an update complete msg" +
+                    " since is already empty the partitions required");
+            isInRequestingDataState = false;
+            storeManager.tell(new UpdateStoreNodeCompletedMsg(currentUpdateID), self());
+        }
 
 
         Logger.std.ilog("Node"+nodeNumber+"'s new partitions on update " +currentUpdateID+":"
@@ -394,8 +406,8 @@ public class StoreNode extends AbstractActorWithStash {
         //as a request
         if( (nodesOfPartition.get(msg.getPartitionRequired()).get(0).compareTo(self()) == 0 &&
                 partitionsRequired.contains(msg.getPartitionRequired()))) {
-            Logger.std.dlog("Node"+nodeNumber+" autoforwarding partition request for partition" +
-                    " " + msg.getPartitionRequired() + " from " + sender().path().address());
+            if(System.currentTimeMillis() % 1000 == 0)
+                Logger.std.dlog("Node"+nodeNumber+" autoforwarding partition request for partition" + " " + msg.getPartitionRequired() + " from " + sender().path().address());
             self().forward(msg, getContext());
             return;
         }
