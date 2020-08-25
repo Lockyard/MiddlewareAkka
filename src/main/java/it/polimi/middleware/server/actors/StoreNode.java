@@ -99,9 +99,9 @@ public class StoreNode extends AbstractActorWithStash {
 
     private boolean isInRequestingDataState = false;
 
-    private Set<Integer> partitionsRequired;
+    private Map<Integer, ActorRef> partitionsRequiredAndTarget;
 
-    private HistoryKeeper historyKeeper;
+    private final HistoryKeeper historyKeeper;
 
 
     /**
@@ -121,7 +121,7 @@ public class StoreNode extends AbstractActorWithStash {
         storeNodesSet = new HashSet<>();
         assignedClientIDs = new HashSet<>();
         unreachableNodes = new HashSet<>();
-        partitionsRequired = new HashSet<>();
+        partitionsRequiredAndTarget = new HashMap<>();
         partitionsToRemoveOnUpdateComplete = new HashSet<>();
         clientToIDMap = new HashMap<>();
         updateValuePerPartition = new HashMap<>();
@@ -144,8 +144,7 @@ public class StoreNode extends AbstractActorWithStash {
     @Override
     public void preRestart(Throwable reason, Option<Object> message) throws Exception {
         super.preRestart(reason, message);
-        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.MemberUp.class,
-                ClusterEvent.UnreachableMember.class, ClusterEvent.MemberEvent.class, ClusterEvent.ReachableMember.class);
+        cluster.subscribe(self(), ClusterEvent.initialStateAsEvents(), ClusterEvent.UnreachableMember.class, ClusterEvent.ReachableMember.class);
         getContext().become(inactive());
     }
 
@@ -164,7 +163,7 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(PartitionRequestMsg.class, this::onPartitionRequestMsg)
                 .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
-                .match(CheckDataConsistencyMsg.class, this::onCheckDataConsistencyMsg)
+                .match(CheckDataConsistencyMsg.class, this::tryOnCheckDataConsistencyMsg)
                 .match(DataConsistencyOkMsg.class, this::onDataConsistencyOkMsg)
                 .match(UpdateAllCompleteMsg.class, this::onUpdateAllCompleteMsg)
                 .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
@@ -180,14 +179,14 @@ public class StoreNode extends AbstractActorWithStash {
                 .match(UpdateStoreNodeStatusMsg.class, this::onUpdateStoreNodeStatusMessage)
                 .match(PartitionRequestMsg.class, this::onPartitionRequestMsg)
                 .match(PartitionRequestReplyMsg.class, this::onPartitionRequestReplyMsg)
-                .match(CheckDataConsistencyMsg.class, this::onCheckDataConsistencyMsg)
+                .match(CheckDataConsistencyMsg.class, this::tryOnCheckDataConsistencyMsg)
                 .match(DataConsistencyOkMsg.class, this::onDataConsistencyOkMsg)
                 .match(ClientAssignMsg.class, this::onClientAssignMessage)
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
                 .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
-                .match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
+                //.match(ClusterEvent.MemberEvent.class, msg -> {Logger.std.dlog("Node" + nodeNumber + " received message " +msg);})
                 .match(Terminated.class, this::onTerminatedClient)
-                .matchAny(this::onUnknownMessage)
+                //.matchAny(this::onUnknownMessage)
                 .build();
     }
 
@@ -231,7 +230,7 @@ public class StoreNode extends AbstractActorWithStash {
      */
     private void onUpdateStoreNodeStatusMessage(UpdateStoreNodeStatusMsg msg) {
         Logger.std.dlog("Node" +nodeNumber+" received update msg, with id: " + msg.getUpdateID() +
-                ", curr updateID:" +currentUpdateID);
+                ", curr updateID:" +currentUpdateID + ", curr P:"+assignedPartitions);
         //discard the message if the update is older than the last one received by this node
         if(msg.getUpdateID() < currentUpdateID) {
             return;
@@ -240,19 +239,57 @@ public class StoreNode extends AbstractActorWithStash {
 
         isInRequestingDataState = true;
 
+        //update the new nodesOfPartition, after assignment
+        nodesOfPartition = msg.getNodesOfPartition();
+
         getContext().become(inactive());
 
         Set<Integer> partitionsToExcludeWhenRequiringUpdate = new HashSet<>();
 
         //re-write the set of nodes in the system
         storeNodesSet = new HashSet<>();
+        for (int i = 0; i < msg.getNodesOfPartition().size(); i++) {
+            //for each partition, assign to the new set of nodes all the nodes
+            storeNodesSet.addAll(msg.getNodesOfPartition().get(i));
+        }
 
 
         for (int i = 0; i < msg.getNodesOfPartition().size(); i++) {
+            //if this node requested previously a partition but the target is not anymore in the store, remove that request
+            if(partitionsRequiredAndTarget.containsKey(i) && !storeNodesSet.contains(partitionsRequiredAndTarget.get(i))) {
+                partitionsRequiredAndTarget.remove(i);
+            }
+
             //if this node is assigned to a partition to which wasn't assigned before, add that partition
-            if(msg.getNodesOfPartition().get(i).contains(self()) && !assignedPartitions.contains(i)) {
+            if(nodesOfPartition.get(i).contains(self()) && !assignedPartitions.contains(i)) {
                 Logger.std.ilog("Node"+nodeNumber+" adding partition " + i);
-                assignNewPartition(i);
+                dataPerPartition.put(i, new HashMap<>());
+                assignedPartitions.add(i);
+
+                //get the partition from someone: the old leader if present, the current leader if the older is not present
+                if(msg.getOldLeaders().get(i) != null &&
+                        storeNodesSet.contains(msg.getOldLeaders().get(i))) {
+                    Logger.std.dlog("Node"+nodeNumber+" is sending a check consistency msg" +
+                            "to old leader " + msg.getOldLeaders().get(i).path().address());
+                    partitionsRequiredAndTarget.put(i, msg.getOldLeaders().get(i));
+                    msg.getOldLeaders().get(i).tell(new CheckDataConsistencyMsg(i,
+                            updateValuePerPartition.getOrDefault(i, 0L), currentUpdateID), self());
+                }
+                //if old leader is not reachable but this is not the leader, ask to the current leader
+                else if(nodesOfPartition.get(i).get(0).compareTo(self()) != 0) {
+                    Logger.std.dlog("Node"+nodeNumber+ " sending a P request on P" + i + " to " +
+                            nodesOfPartition.get(i).get(0).path().address());
+                    partitionsRequiredAndTarget.put(i, nodesOfPartition.get(i).get(0));
+                    nodesOfPartition.get(i).get(0).tell(new PartitionRequestMsg(i, currentUpdateID), self());
+                }
+                //if this is leader and was just assigned on an update, then probably some data got lost
+                else {
+                    Logger.std.dlog("Node"+nodeNumber+" is now leader of P"+i+" but it wasn't assigned " +
+                            "to it before and old leader is not found. Data of this partition probably is lost!");
+                    partitionsRequiredAndTarget.remove(i);
+                }
+
+                //if this node added a new partition, exclude it when requiring an update
                 partitionsToExcludeWhenRequiringUpdate.add(i);
             }
             //else if this node is no longer assigned to a partition, remove it
@@ -262,16 +299,14 @@ public class StoreNode extends AbstractActorWithStash {
                 partitionsToExcludeWhenRequiringUpdate.add(i);
             }
 
-            //else if this is the leader and remained the leader in the update, exclude that partition when requiring
-            //update
-            else if(msg.getNodesOfPartition().get(i).get(0).compareTo(self()) == 0 &&
-                nodesOfPartition.get(i).get(0).compareTo(self()) == 0)
+            //if this was the leader and remained leader for this partition, don't ask anyone
+            //for a check on that partition
+            else if(nodesOfPartition.get(i).get(0).compareTo(self()) == 0 &&
+                    msg.getOldLeaders().get(i).compareTo(self()) == 0) {
+                Logger.std.dlog("Node"+nodeNumber+" was and remained leader of p. " + i);
                 partitionsToExcludeWhenRequiringUpdate.add(i);
-
-            //for each partition, assign to the new set of nodes all the nodes
-            storeNodesSet.addAll(msg.getNodesOfPartition().get(i));
+            }
         }
-
 
 
         //for each partition not assigned in this update, and for which this node is not leader,
@@ -279,20 +314,43 @@ public class StoreNode extends AbstractActorWithStash {
         for (Integer partition :
                 assignedPartitions) {
             if (!partitionsToExcludeWhenRequiringUpdate.contains(partition)) {
-                partitionsRequired.add(partition);
-                Logger.std.dlog("Node"+nodeNumber+" sending check consistency for partition " + partition +
-                        " to " + nodesOfPartition.get(partition).get(0).path().address());
-                nodesOfPartition.get(partition).get(0).tell(
-                        new CheckDataConsistencyMsg(partition, updateValuePerPartition.get(partition), currentUpdateID), self());
+
+                //if this became leader of a partition, ask to the old leader of that partition
+                //if exists, if it doesn't exists keep your data and don't add it to the required set
+                if(nodesOfPartition.get(partition).get(0).compareTo(self()) == 0) {
+                    if(msg.getOldLeaders().get(partition) != null &&
+                            storeNodesSet.contains(msg.getOldLeaders().get(partition))) {
+                        Logger.std.dlog("Node"+nodeNumber+" is sending a check consistency msg" +
+                                "to old leader " + msg.getOldLeaders().get(partition).path().address());
+                        partitionsRequiredAndTarget.put(partition, msg.getOldLeaders().get(partition));
+                        msg.getOldLeaders().get(partition).tell(new CheckDataConsistencyMsg(partition,
+                                updateValuePerPartition.getOrDefault(partition, 0L), currentUpdateID), self());
+                    }
+                    //remove partition assigned if old leader is no more reachable
+                    else {
+                        Logger.std.dlog("Node"+nodeNumber+" is now leader of a partition it had ("+
+                                partition+"), but old leader is no more in store (" +
+                                msg.getOldLeaders().get(partition).path().address() +")");
+                    }
+                }
+                //if this is not the leader, ask to the current leader for that partition
+                else {
+                    Logger.std.dlog("Node"+nodeNumber+" is sending check consistency for partition " +
+                            partition + " to current leader " +
+                            nodesOfPartition.get(partition).get(0).path().address());
+                    partitionsRequiredAndTarget.put(partition, nodesOfPartition.get(partition).get(0));
+                    nodesOfPartition.get(partition).get(0).tell(
+                            new CheckDataConsistencyMsg(partition, updateValuePerPartition.getOrDefault(partition,
+                                    0L), currentUpdateID), self());
+                }
+
             }
         }
 
-        //update the new nodesOfPartition, after assignment
-        nodesOfPartition = msg.getNodesOfPartition();
 
         //if at the end of the update no partitions are required, report to the store manager that update for
         //this node is ended
-        if(partitionsRequired.isEmpty()) {
+        if(partitionsRequiredAndTarget.isEmpty()) {
             Logger.std.dlog("Node " + nodeNumber + " sending on update an update complete msg" +
                     " since is already empty the partitions required");
             isInRequestingDataState = false;
@@ -335,10 +393,13 @@ public class StoreNode extends AbstractActorWithStash {
         if(msg.mustRequestData()) {
             isInRequestingDataState = true;
             getContext().become(inactive());
-            partitionsRequired = new HashSet<>(assignedPartitions);
+
             for (Integer partition: assignedPartitions) {
-                if(nodesOfPartition.get(partition).get(0) != null && !nodesOfPartition.get(partition).get(0).equals(self()))
+                if(nodesOfPartition.get(partition).get(0) != null && !nodesOfPartition.get(partition).get(0).equals(self())) {
+                    partitionsRequiredAndTarget.put(partition, nodesOfPartition.get(partition).get(0));
                     nodesOfPartition.get(partition).get(0).tell(new PartitionRequestMsg(partition, currentUpdateID), self());
+                }
+
             }
         }
         //if doesn't have to request data, become active now
@@ -350,19 +411,42 @@ public class StoreNode extends AbstractActorWithStash {
     }
 
 
+    private void tryOnCheckDataConsistencyMsg(CheckDataConsistencyMsg msg) {
+        try {
+            onCheckDataConsistencyMsg(msg);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     private void onCheckDataConsistencyMsg(CheckDataConsistencyMsg msg) {
+
         if(msg.getUpdateID() < currentUpdateID)
             return;
 
-        if(msg.getUpdateValue() != updateValuePerPartition.get(msg.getPartition())) {
+        //forward indefinitely the message on update if this is leader but partition requested is still pending
+        //as a request
+        if( (nodesOfPartition.get(msg.getPartition()).get(0).compareTo(self()) == 0 &&
+                partitionsRequiredAndTarget.containsKey(msg.getPartition()))) {
+            if(System.currentTimeMillis() % 1000 == 0)
+                Logger.std.dlog("Node"+nodeNumber+" autoforwarding checkDataC. for partition" + " " + msg.getPartition() + " from " + sender().path().address());
+            self().forward(msg, getContext());
+            return;
+        }
+
+        Logger.std.dlog("Node"+nodeNumber+" received checkDataC. on partition " + msg.getPartition() +
+                " from " + sender().path().address() +". uID: " + currentUpdateID + ", msg uID:" + msg.getUpdateID());
+
+
+        if(msg.getUpdateValue() != updateValuePerPartition.getOrDefault(msg.getPartition(), 0L)) {
             Logger.std.dlog("Node"+nodeNumber+" received a check consistency from " + sender() +
                     ", but failed. This node's update value for partition " +msg.getPartition() +
-                    " is " + updateValuePerPartition.get(msg.getPartition()) +", while sender's is " +msg.getUpdateValue());
+                    " is " + updateValuePerPartition.getOrDefault(msg.getPartition(), 0L) +", while sender's is " +msg.getUpdateValue());
 
             sender().tell(new PartitionRequestReplyMsg(msg.getPartition(), dataPerPartition.get(msg.getPartition()),
                     getClientOpIDMapForSinglePartition(msg.getPartition()), msg.getUpdateID()), self());
         } else {
-            Logger.std.dlog("Node"+nodeNumber+" received check consistency from " + sender().path().address()+
+            Logger.std.dlog("Node"+nodeNumber+" received check consistency msg from " + sender().path().address()+
                     " for partition " +msg.getPartition() +" and is ok");
             sender().tell(new DataConsistencyOkMsg(msg.getPartition(), msg.getUpdateID()), self());
         }
@@ -373,24 +457,22 @@ public class StoreNode extends AbstractActorWithStash {
 
         //if is outdated, do not consider it
         if(msg.getUpdateID() < currentUpdateID) {
-            Logger.std.dlog("Consistency check ok on Node"+nodeNumber+" but was ignored since is " +
-                    "lower than this one's");
             return;
         }
 
         if(isInRequestingDataState) {
 
             //if the partition was one required, remove it and put the new data in
-            partitionsRequired.remove(msg.getPartition());
+            partitionsRequiredAndTarget.remove(msg.getPartition());
 
             Logger.std.dlog("Node"+nodeNumber +", check ok for partition " +msg.getPartition() +
-                    ", partitions required left: " + partitionsRequired);
+                    ", partitions required left: " + partitionsRequiredAndTarget);
 
             //if all the partitions required are received, notify the store manager
-            if(partitionsRequired.isEmpty()) {
+            if(partitionsRequiredAndTarget.isEmpty()) {
                 isInRequestingDataState = false;
                 Logger.std.dlog("Node"+nodeNumber+" got all the data needed. Activating the node and " +
-                        "notifying the storemanager");
+                        "notifying the storemanager for update " + currentUpdateID);
                 storeManager.tell(new UpdateStoreNodeCompletedMsg(currentUpdateID), self());
             }
         }
@@ -402,10 +484,16 @@ public class StoreNode extends AbstractActorWithStash {
      * If is not, forward this to the leader
      */
     private void onPartitionRequestMsg(PartitionRequestMsg msg) {
+
+        //if is outdated, do not consider it
+        if(msg.getUpdateID() < currentUpdateID) {
+            return;
+        }
+
         //forward indefinitely the message on update if this is leader but partition requested is still pending
         //as a request
         if( (nodesOfPartition.get(msg.getPartitionRequired()).get(0).compareTo(self()) == 0 &&
-                partitionsRequired.contains(msg.getPartitionRequired()))) {
+                partitionsRequiredAndTarget.containsKey(msg.getPartitionRequired()))) {
             if(System.currentTimeMillis() % 1000 == 0)
                 Logger.std.dlog("Node"+nodeNumber+" autoforwarding partition request for partition" + " " + msg.getPartitionRequired() + " from " + sender().path().address());
             self().forward(msg, getContext());
@@ -447,16 +535,20 @@ public class StoreNode extends AbstractActorWithStash {
 
         if(isInRequestingDataState) {
             //if the partition was one required, remove it and put the new data in
-            if(partitionsRequired.remove(msg.getPartitionRequired())) {
+            if(partitionsRequiredAndTarget.containsKey(msg.getPartitionRequired())) {
+                partitionsRequiredAndTarget.remove(msg.getPartitionRequired());
                 Logger.std.dlog("Node"+nodeNumber+" adding data for partition " + msg.getPartitionRequired());
                 dataPerPartition.put(msg.getPartitionRequired(), msg.getPartitionData());
+
                 msg.getClientToOpIDMap().forEach((clientID, opID) -> {
+                    if(!clientOpIDMap.containsKey(clientID))
+                        clientOpIDMap.put(clientID, new HashMap<>());
                     clientOpIDMap.get(clientID).put(msg.getPartitionRequired(), opID);
                 });
             }
 
             //if all the partitions required are received, notify the store manager
-            if(partitionsRequired.isEmpty()) {
+            if(partitionsRequiredAndTarget.isEmpty()) {
                 isInRequestingDataState = false;
                 Logger.std.dlog("Node"+nodeNumber+" got all the data needed. Activating the node and " +
                         "notifying the storemanager");
@@ -644,7 +736,16 @@ public class StoreNode extends AbstractActorWithStash {
      */
     private void onClientAssignMessage(ClientAssignMsg msg) {
         Logger.std.dlog("Node" + nodeNumber+" received client " +msg.getClientRef() +
-                (msg.isSingleAssignment() ? " as its first connection" : " as requesting a new access node"));
+                (msg.isSingleAssignment() ? " as requesting a new access node" : " as its first connection"));
+
+        if(assignedClientIDs.contains(msg.getClientID()))
+            return;
+
+        assignedClientIDs.add(msg.getClientID());
+        clientToIDMap.put(msg.getClientRef(), msg.getClientID());
+        getContext().watch(msg.getClientRef());
+        clientOpIDMap.put(msg.getClientID(), new HashMap<>());
+
 
         //if is single assignment, means that is a generic new assignment while client is already connected
         if(msg.isSingleAssignment()) {
@@ -652,10 +753,6 @@ public class StoreNode extends AbstractActorWithStash {
         }
         //if not single assignment, then is first assignment for that client. setup stuff
         else {
-            assignedClientIDs.add(msg.getClientID());
-            clientToIDMap.put(msg.getClientRef(), msg.getClientID());
-            getContext().watch(msg.getClientRef());
-            clientOpIDMap.put(msg.getClientID(), new HashMap<>());
             sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), hashSpacePartition,  msg.getClientID()), self());
         }
 
@@ -718,10 +815,12 @@ public class StoreNode extends AbstractActorWithStash {
         if(!clientOpIDMap.get(msg.getClientID()).containsKey(partition))
             clientOpIDMap.get(msg.getClientID()).put(partition, 0L);
 
+
         //if op id is consistent with what's saved, then get it
         if(clientOpIDMap.get(msg.getClientID()).get(partition) == msg.getClientOpID()) {
-            return new ReplyGetMsg(msg.getKey(), dataPerPartition.get(partition).get(msg.getKey()).getValue(),
-                    msg.getClientOpID());
+            String result = dataPerPartition.get(partition).containsKey(msg.getKey()) ?
+                    dataPerPartition.get(partition).get(msg.getKey()).getValue() : null;
+            return new ReplyGetMsg(msg.getKey(), result, msg.getClientOpID());
         }
         //if op id is precedent what's is in mem, ask to the history, if present
         else if (clientOpIDMap.get(msg.getClientID()).get(partition) < msg.getClientOpID()) {
@@ -785,7 +884,7 @@ public class StoreNode extends AbstractActorWithStash {
 
     private void incrementPartitionUpdateValue(int partition) {
         //increment by 1 the update value of that partition
-        updateValuePerPartition.put(partition, updateValuePerPartition.get(partition)+1);
+        updateValuePerPartition.put(partition, updateValuePerPartition.getOrDefault(partition, 0L) +1);
     }
 
 
@@ -799,20 +898,7 @@ public class StoreNode extends AbstractActorWithStash {
 
 
 
-    /**
-     * assign new partition and ask to the leader data for it.
-     * enter in requesting state.
-     */
-    private void assignNewPartition(int partition) {
-        dataPerPartition.put(partition, new HashMap<>());
-        assignedPartitions.add(partition);
-        //request the data
-        isInRequestingDataState = true;
-        getContext().become(inactive());
-        partitionsRequired.add(partition);
-        nodesOfPartition.get(partition).get(0).tell(new PartitionRequestMsg(partition, currentUpdateID), self());
 
-    }
 
 
     private void removePartitionAssignment(int partitionRemoved) {

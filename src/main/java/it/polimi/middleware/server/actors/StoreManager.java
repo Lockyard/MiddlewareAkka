@@ -58,7 +58,7 @@ public class StoreManager extends AbstractActorWithStash {
     /**
      * A list containing all nodes currently updating for an update given by this store manager
      */
-    private final List<ActorRef> updatingNodes;
+    private final Set<ActorRef> updatingNodes;
 
     /**
      * List of nodes waiting to be added to the system.
@@ -83,7 +83,7 @@ public class StoreManager extends AbstractActorWithStash {
         //prepare the list of lists with the specified capacities:
         //external list is size of the partition of space, each sublist is size of the number of replicas
         storeNodes = new ArrayList<>();
-        updatingNodes = new ArrayList<>();
+        updatingNodes = new HashSet<>();
         nodesInJoinQueue = new HashSet<>();
 
         nodeClientAmountMap = new HashMap<>();
@@ -142,6 +142,7 @@ public class StoreManager extends AbstractActorWithStash {
         //remove all the storenode associated to that member
         if(md.member().hasRole("storenode")) {
             ActorRef nodeToRemove = ActorRef.noSender();
+            Map<Integer, ActorRef> oldLeaders = partitionManager.getPartitionToLeaderMap();
             for (ActorRef node :
                     storeNodes) {
                 if(node.path().address().equals(md.member().address())) {
@@ -149,28 +150,34 @@ public class StoreManager extends AbstractActorWithStash {
                         nodeToRemove = node;
                         partitionManager.removeNode(node);
                     } catch (NotEnoughNodesException nene) {
-                        Logger.std.ilog("Not enough nodes left in the system! Spawning local node " +
-                                "to reach minimum data replicas!");
+                        Logger.std.ilog("Not enough nodes left in the system!");
+                        /*/
                         ActorRef newNode = spawnLocalNode();
                         isUpdateOngoing = true;
                         updatingNodes.add(newNode);
                         newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
+                        //*/
                     }
+
+
                 }
             }
 
             //remove the node, notify all other nodes of new assignments
             if (storeNodes.remove(nodeToRemove)) {
-                updatingNodes.remove(nodeToRemove);
                 nodeClientAmountMap.remove(nodeToRemove);
-                Logger.std.dlog("Removed from store manager node " +nodeToRemove +
-                        "\nstoreNodes: " +storeNodes + "\nupdatingNodes:"+updatingNodes);
                 updateID++;
                 isUpdateOngoing = true;
+                updatingNodes.clear();
                 updatingNodes.addAll(storeNodes);
+
+                Logger.std.dlog("Removed from store manager node " +nodeToRemove +
+                        "\nstoreNodes("+storeNodes.size()+"):" +storeNodes + "\nupdatingNodes(" + updatingNodes.size()+"):"+updatingNodes +
+                        "\nUpdate ID: " +updateID);
                 for (ActorRef node :
                         storeNodes) {
-                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), oldLeaders,
+                            updateID), self());
                 }
             } else {
                 Logger.std.dlog("Tried to remove a node which was not in the store manager. memberAddress: " +md.member().address());
@@ -184,6 +191,8 @@ public class StoreManager extends AbstractActorWithStash {
         cluster.down(um.member().address());
         if(true)
             return;
+
+        Map<Integer, ActorRef> oldLeaders = partitionManager.getPartitionToLeaderMap();
 
         boolean markedUnreachable = false;
         if(um.member().hasRole("storenode")) {
@@ -214,7 +223,7 @@ public class StoreManager extends AbstractActorWithStash {
 
         //if some node were marked as unreachable something changed, tell to all other nodes
         if(markedUnreachable)
-            updateAllNodes();
+            updateAllNodes(oldLeaders);
     }
 
 
@@ -236,13 +245,15 @@ public class StoreManager extends AbstractActorWithStash {
         //if an update is ongoing and someone wants to join, wait for update completion first.
         // stash the message
         if(isUpdateOngoing) {
-            Logger.std.dlog("Update is ongoing. Request activation was stashed");
+            Logger.std.dlog("Update " +updateID +" is ongoing. Request activation was stashed");
             nodesInJoinQueue.add(msg.getStoreNodeRef());
             stash();
             return;
         }
         //remove if present the node to the join queue
         nodesInJoinQueue.remove(msg.getStoreNodeRef());
+
+        Map<Integer, ActorRef> oldLeaders = partitionManager.getPartitionToLeaderMap();
 
         //add the node logically to the system
         partitionManager.addNode(msg.getStoreNodeRef());
@@ -260,7 +271,8 @@ public class StoreManager extends AbstractActorWithStash {
                     node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
                 else {
                     Logger.std.log(Logger.LogLevel.VERBOSE, "Sending update status to " + node);
-                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
+                    node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(),
+                            oldLeaders, updateID), self());
                 }
             }
         }
@@ -407,8 +419,11 @@ public class StoreManager extends AbstractActorWithStash {
         for (ActorRef node : storeNodes) {
             //if is not a node the client already have, give it, increment load and return
             if (!msg.getActorsAlreadyAssigned().contains(node)) {
+                Logger.std.dlog("Asking to " + node.path().address() +" to manage client access, as a new" +
+                        " access point for them");
                 CompletableFuture<Object> future = ask(node, new ClientAssignMsg(msg.getClientID(), sender()), timeout).toCompletableFuture();
                 pipe(future, getContext().dispatcher()).to(sender());
+                return;
             }
         }
     }
@@ -444,11 +459,12 @@ public class StoreManager extends AbstractActorWithStash {
     /**
      * Update all the active nodes in the system with the routing table of partitions
      */
-    private void updateAllNodes() {
+    private void updateAllNodes(Map<Integer, ActorRef> oldLeaders) {
         updateID++;
         for (ActorRef node :
                 partitionManager.getActiveNodes()) {
-            node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(), updateID), self());
+            node.tell(new UpdateStoreNodeStatusMsg(partitionManager.getNodesOfPartitionList(),
+                    oldLeaders, updateID), self());
         }
     }
 

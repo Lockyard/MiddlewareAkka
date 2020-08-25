@@ -122,6 +122,8 @@ public class ClientActor extends AbstractActorWithStash {
     }
 
     private void onTerminatedAccessNode(Terminated t) {
+        Logger.std.dlog("Client saw its node " +t.actor().path().address() +" terminated. Asking for " +
+                "one other node");
         //remove it, if actually removed ask to the server another actor assignment
         if(accessNodes.remove(t.actor())) {
             server.tell(new RequestNewActorMsg(clientID, new ArrayList<>(accessNodes)), self());

@@ -396,6 +396,17 @@ public class PartitionManager {
     }
 
 
+    public Map<Integer, ActorRef> getPartitionToLeaderMap() {
+        if(!isRunning())
+            return new HashMap<>();
+        Map<Integer, ActorRef> res = new HashMap<>();
+        for (int i = 0; i < nodesOfPartition.size(); i++) {
+            res.put(i, nodesOfPartition.get(i).get(0));
+        }
+        return res;
+    }
+
+
     /**
      * Get a list of all the active nodes
      * @return
