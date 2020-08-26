@@ -611,13 +611,17 @@ public class StoreNode extends AbstractActorWithStash {
             int partition = partitionOf(getMsg.getKey());
             //if datum is assigned to this replica
             if(dataPerPartition.containsKey(partition)) {
+                Logger.std.dlog(">Node" +nodeNumber+" is assigned to P"+partition);
                 ReplyGetMsg reply = replyGetFromData(getMsg, partition);
                 if(reply != null) {
+                    Logger.std.dlog(">Node" +nodeNumber+" found a datum, returning it (" +reply+")");
                     sender().tell(reply, self());
                 }
                 //if datum was not found here, ask to the leader. Even if this is the leader, the message could be late, so forward to
                 //itself anyway. The message will die eventually or be answered
                 else {
+                    Logger.std.dlog(">Node" +nodeNumber+" didn't find a datum, forwarding get to " +
+                            nodesOfPartition.get(partition).get(0));
                     //set self as sender
                     getMsg.setSender(self());
                     //ask and pipe the answer
@@ -629,7 +633,7 @@ public class StoreNode extends AbstractActorWithStash {
                 List<ActorRef> nodesOfThisPartition = nodesOfPartition.get(partition);
                 roundRobin(nodesOfThisPartition.size());
 
-                Logger.std.dlog("Datum with key " + getMsg.getKey() + ", of P:" +partition +
+                Logger.std.dlog(">Datum with key " + getMsg.getKey() + ", of P:" +partition +
                         " is not assigned to this node. Asking to node " + nodesOfThisPartition.get(rrIndex));
                 //set self as sender
                 getMsg.setSender(self());
@@ -681,9 +685,10 @@ public class StoreNode extends AbstractActorWithStash {
 
             //if this node have assigned the partition of that key
             if(nodesOfKey.contains(self())) {
-
+                Logger.std.dlog("Node" +nodeNumber+" is assigned to P"+partition);
                 //if this is the leader of the partition of that datum, write and propagate
                 if(nodesOfKey.get(0).equals(self())) {
+                    Logger.std.dlog("Node" +nodeNumber+" is leader of P"+partition);
                     insertData(putMsg, partition, false);
                     if(nodesOfKey.size() >= 2) {
                         putMsg.setSender(self());
@@ -695,7 +700,8 @@ public class StoreNode extends AbstractActorWithStash {
                 //if is not leader but the put comes from the leader, then update data, and forward if there are
                 //replicas after this one, or reply to the leader if is the last replica
                 else if(nodesOfKey.get(0).equals(putMsg.sender())) {
-                    Logger.std.dlog("Node" +nodeNumber+ " is not leader, put request from leader");
+                    Logger.std.dlog("Node" +nodeNumber+ " is not leader of P"+partition+
+                            ", received put request from leader");
                     //update data
                     insertData(putMsg, partition, true);
 
@@ -709,6 +715,8 @@ public class StoreNode extends AbstractActorWithStash {
                 }
                 //else this is a client access point but this node has no leadership on that key. ask to the leader
                 else {
+                    Logger.std.dlog("Node" +nodeNumber+" has P"+partition+" but not as a leader, " +
+                            "and is AP of requester, sending to the leader");
                     putMsg.setSender(self());
                     CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
                     pipe(future, getContext().dispatcher()).to(sender());
@@ -716,9 +724,11 @@ public class StoreNode extends AbstractActorWithStash {
             }
             //if the node doesn't have this key assigned, ask to the leader of the key to perform a put
              else {
+                Logger.std.dlog("Node" +nodeNumber+" has not P"+partition+", " +
+                        "and is AP of requester, sending to the leader");
                  putMsg.setSender(self());
-                CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
-                pipe(future, getContext().dispatcher()).to(sender());
+                 CompletableFuture<Object> future = ask(nodesOfKey.get(0), putMsg, timeout.multipliedBy(nodesOfKey.size())).toCompletableFuture();
+                 pipe(future, getContext().dispatcher()).to(sender());
             }
         }
         //else an actor with no rights tried to do a put on this node. answer error
@@ -738,14 +748,12 @@ public class StoreNode extends AbstractActorWithStash {
         Logger.std.dlog("Node" + nodeNumber+" received client " +msg.getClientRef() +
                 (msg.isSingleAssignment() ? " as requesting a new access node" : " as its first connection"));
 
-        if(assignedClientIDs.contains(msg.getClientID()))
-            return;
-
-        assignedClientIDs.add(msg.getClientID());
-        clientToIDMap.put(msg.getClientRef(), msg.getClientID());
-        getContext().watch(msg.getClientRef());
-        clientOpIDMap.put(msg.getClientID(), new HashMap<>());
-
+        if(!assignedClientIDs.contains(msg.getClientID())) {
+            assignedClientIDs.add(msg.getClientID());
+            clientToIDMap.put(msg.getClientRef(), msg.getClientID());
+            getContext().watch(msg.getClientRef());
+            clientOpIDMap.put(msg.getClientID(), new HashMap<>());
+        }
 
         //if is single assignment, means that is a generic new assignment while client is already connected
         if(msg.isSingleAssignment()) {
@@ -812,7 +820,8 @@ public class StoreNode extends AbstractActorWithStash {
         //setup if something is empty for a specific client
         if(!clientOpIDMap.containsKey(msg.getClientID()))
             clientOpIDMap.put(msg.getClientID(), new HashMap<>());
-        if(!clientOpIDMap.get(msg.getClientID()).containsKey(partition))
+        if(!clientOpIDMap.get(msg.getClientID()).containsKey(partition) ||
+            clientOpIDMap.get(msg.getClientID()).get(partition) == null)
             clientOpIDMap.get(msg.getClientID()).put(partition, 0L);
 
 

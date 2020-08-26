@@ -41,7 +41,7 @@ public class HistoryKeeper {
                 return new ReplyGetMsg(msg.getKey(), messages[i].getVal(), msg.getClientOpID());
             }
         }
-        for (int i = messages.length; i > index; i--) {
+        for (int i = messages.length-1; i > index; i--) {
             //if found a match
             if(msg.getClientID() == messages[i].getClientID() && msg.getClientOpID() == messages[i].getClientOpID()) {
                 return new ReplyGetMsg(msg.getKey(), messages[i].getVal(), msg.getClientOpID());

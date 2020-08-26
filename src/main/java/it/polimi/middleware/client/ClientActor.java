@@ -131,7 +131,12 @@ public class ClientActor extends AbstractActorWithStash {
     }
 
     private void onRequestNewActorReplyMsg(RequestNewActorReplyMsg msg) {
-        accessNodes.add(msg.getAssignedActor());
+        if(accessNodes.contains(msg.getAssignedActor())) {
+            server.tell(new RequestNewActorMsg(clientID, new ArrayList<>(accessNodes)), self());
+        } else {
+            accessNodes.add(msg.getAssignedActor());
+            Logger.std.ilog("Received new node. Assigned nodes:\n" + accessNodes);
+        }
         if(accessNodes.size()>0) {
             unstashAll();
         }
