@@ -1,9 +1,9 @@
 <component name="ArtifactManager">
-  <artifact type="jar" name="Client">
-    <output-path>$PROJECT_DIR$/out/artifacts/Client</output-path>
+  <artifact type="jar" name="StoreNodeRunner">
+    <output-path>$PROJECT_DIR$/out/artifacts/StoreNodeRunner</output-path>
     <root id="archive" name="AkkaMiddleware.jar">
       <element id="directory" name="META-INF">
-        <element id="file-copy" path="$PROJECT_DIR$/src/main/resources/manifests/client/META-INF/MANIFEST.MF" />
+        <element id="file-copy" path="$PROJECT_DIR$/src/main/resources/manifests/storenoderunner/META-INF/MANIFEST.MF" />
       </element>
       <element id="module-output" name="AkkaMiddleware" />
       <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/sonatype/sisu/sisu-inject-plexus/1.4.2/sisu-inject-plexus-1.4.2.jar" path-in-jar="/" />
