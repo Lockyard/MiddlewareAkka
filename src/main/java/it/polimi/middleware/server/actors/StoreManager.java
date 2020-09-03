@@ -403,8 +403,7 @@ public class StoreManager extends AbstractActorWithStash {
             storeNodes.sort(Comparator.comparingInt(this::clientLoadOfNode));
 
             for (int i = 0; i < assignedNodes; i++) {
-                CompletableFuture<Object> future = ask(storeNodes.get(i), new ClientAssignMsg(uid, assignedNodes, sender()), timeout).toCompletableFuture();
-                pipe(future, getContext().dispatcher()).to(sender());
+                storeNodes.get(i).forward(new ClientAssignMsg(uid, assignedNodes), getContext());
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -421,8 +420,7 @@ public class StoreManager extends AbstractActorWithStash {
             if (!msg.getActorsAlreadyAssigned().contains(node)) {
                 Logger.std.dlog("Asking to " + node.path().address() +" to manage client access, as a new" +
                         " access point for them");
-                CompletableFuture<Object> future = ask(node, new ClientAssignMsg(msg.getClientID(), sender()), timeout).toCompletableFuture();
-                pipe(future, getContext().dispatcher()).to(sender());
+                node.forward(new ClientAssignMsg(msg.getClientID()), getContext());
                 return;
             }
         }

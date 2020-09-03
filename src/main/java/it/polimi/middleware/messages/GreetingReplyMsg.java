@@ -16,7 +16,6 @@ public class GreetingReplyMsg implements Serializable {
     private static final long serialVersionUID = 771240900123302L;
 
     private final boolean success;
-    private ActorRef assignedActor;
     private int totalAssignedActors;
     private long clientID;
 
@@ -38,11 +37,9 @@ public class GreetingReplyMsg implements Serializable {
 
     /**
      * Create the reply specifying the actor and the total actors assigned. This means that the greeting was successful
-     * @param assignedActor the ref of one of the actor assigned
      * @param totalAssignedActors the total actors assigned that the client should expect to reply
      */
-    public GreetingReplyMsg(ActorRef assignedActor, int totalAssignedActors, int numOfPartitions, long clientID) {
-        this.assignedActor = assignedActor;
+    public GreetingReplyMsg(int totalAssignedActors, int numOfPartitions, long clientID) {
         this.totalAssignedActors = totalAssignedActors;
         this.numOfPartitions = numOfPartitions;
         this.clientID = clientID;
@@ -51,10 +48,6 @@ public class GreetingReplyMsg implements Serializable {
 
     public boolean isSuccessful() {
         return success;
-    }
-
-    public ActorRef getAssignedActor() {
-        return assignedActor;
     }
 
     public int getTotalAssignedActors() {

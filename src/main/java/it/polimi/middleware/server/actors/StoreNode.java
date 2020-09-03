@@ -154,7 +154,6 @@ public class StoreNode extends AbstractActorWithStash {
         cluster.unsubscribe(self());
     }
 
-    //Behaviors TODO
     //when inactive listen for messages updating its information about status and neighbors, stash all the others
     private Receive inactive() {
         return receiveBuilder()
@@ -745,23 +744,23 @@ public class StoreNode extends AbstractActorWithStash {
      * @param msg the message
      */
     private void onClientAssignMessage(ClientAssignMsg msg) {
-        Logger.std.dlog("Node" + nodeNumber+" received client " +msg.getClientRef() +
+        Logger.std.dlog("Node" + nodeNumber+" received client " + sender() +
                 (msg.isSingleAssignment() ? " as requesting a new access node" : " as its first connection"));
 
         if(!assignedClientIDs.contains(msg.getClientID())) {
             assignedClientIDs.add(msg.getClientID());
-            clientToIDMap.put(msg.getClientRef(), msg.getClientID());
-            getContext().watch(msg.getClientRef());
+            clientToIDMap.put(sender(), msg.getClientID());
+            getContext().watch(sender());
             clientOpIDMap.put(msg.getClientID(), new HashMap<>());
         }
 
         //if is single assignment, means that is a generic new assignment while client is already connected
         if(msg.isSingleAssignment()) {
-            sender().tell(new RequestNewActorReplyMsg(self()), self());
+            sender().tell(new RequestNewActorReplyMsg(), self());
         }
         //if not single assignment, then is first assignment for that client. setup stuff
         else {
-            sender().tell(new GreetingReplyMsg(self(), msg.getNodesAssigned(), hashSpacePartition,  msg.getClientID()), self());
+            sender().tell(new GreetingReplyMsg(msg.getNodesAssigned(), hashSpacePartition,  msg.getClientID()), self());
         }
 
 

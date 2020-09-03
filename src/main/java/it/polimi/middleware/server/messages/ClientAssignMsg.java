@@ -12,7 +12,6 @@ public class ClientAssignMsg extends ServerMessage {
     private final long clientID;
     private final int nodesAssigned;
     private final boolean isSingleAssignment;
-    private final ActorRef clientRef;
 
     /**
      * This constructor is used when the greeting is made: assign a client and add the information
@@ -20,11 +19,10 @@ public class ClientAssignMsg extends ServerMessage {
      * @param clientID the id of the client
      * @param nodesAssigned the number of nodes assigned
      */
-    public ClientAssignMsg(long clientID, int nodesAssigned, ActorRef clientRef) {
+    public ClientAssignMsg(long clientID, int nodesAssigned) {
         this.clientID = clientID;
         this.nodesAssigned = nodesAssigned;
         isSingleAssignment = false;
-        this.clientRef = clientRef;
     }
 
 
@@ -32,11 +30,10 @@ public class ClientAssignMsg extends ServerMessage {
      * This constructor is used when a single assignment is made: the client has already some nodes assigned
      * @param clientID the id of the client
      */
-    public ClientAssignMsg(long clientID, ActorRef clientRef) {
+    public ClientAssignMsg(long clientID) {
         this.clientID = clientID;
         nodesAssigned = 1;
         isSingleAssignment = true;
-        this.clientRef = clientRef;
     }
 
     public long getClientID() {
@@ -50,9 +47,5 @@ public class ClientAssignMsg extends ServerMessage {
 
     public boolean isSingleAssignment() {
         return isSingleAssignment;
-    }
-
-    public ActorRef getClientRef() {
-        return clientRef;
     }
 }

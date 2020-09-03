@@ -107,14 +107,14 @@ public class ClientActor extends AbstractActorWithStash {
         if(msg.isSuccessful()) {
             isConnected = true;
             clientID = msg.getClientID();
-            accessNodes.add(msg.getAssignedActor());
-            getContext().watch(msg.getAssignedActor());
+            accessNodes.add(sender());
+            getContext().watch(sender());
 
             numOfPartitions = msg.getNumOfPartitions();
             for (int i = 0; i < numOfPartitions; i++) {
                 opIDPerPartition.put(i, 0);
             }
-            ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + msg.getAssignedActor().path().address()+")" +
+            ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + sender().path().address()+")" +
                     " , " + accessNodes.size() + "/" + msg.getTotalAssignedActors());
         } else {
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Greeting with server failed [" + msg.getDescription()+"]");
@@ -131,10 +131,10 @@ public class ClientActor extends AbstractActorWithStash {
     }
 
     private void onRequestNewActorReplyMsg(RequestNewActorReplyMsg msg) {
-        if(accessNodes.contains(msg.getAssignedActor())) {
+        if(accessNodes.contains(sender())) {
             server.tell(new RequestNewActorMsg(clientID, new ArrayList<>(accessNodes)), self());
         } else {
-            accessNodes.add(msg.getAssignedActor());
+            accessNodes.add(sender());
             Logger.std.ilog("Received new node. Assigned nodes:\n" + accessNodes);
         }
         if(accessNodes.size()>0) {
