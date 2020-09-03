@@ -216,10 +216,10 @@ public class StoreNode extends AbstractActorWithStash {
 
 
     private void onGrantAccessToStoreMsg(GrantAccessToStoreMsg msg) {
-        storeManager = msg.getStoreManagerRef();
+        storeManager = sender();
         nodeNumber = msg.getNodeNumber();
         if(msg.mustRequestActivation())
-            storeManager.tell(new RequestActivateMsg(self()), self());
+            storeManager.tell(new RequestActivateMsg(storeManager), self());
     }
 
 
@@ -674,20 +674,20 @@ public class StoreNode extends AbstractActorWithStash {
             return;
         }
 
-        Logger.std.dlog("Node" +nodeNumber+ " received put message " + putMsg.toString());
+        int partition = partitionOf(putMsg.getKey());
+
+        Logger.std.dlog("Node" +nodeNumber+ " received put message " + putMsg.toString() +"(P:" +
+                partition + ", assigned: " + nodesOfPartition.get(partition).contains(self()) +
+                ", leader: " + nodesOfPartition.get(partition).get(0).equals(self()));
 
         //if is a legit request: from client assigned to this node or another node of the system
         if(assignedClientIDs.contains(putMsg.getClientID()) || storeNodesSet.contains(putMsg.sender())) {
 
-            int partition = partitionOf(putMsg.getKey());
             List<ActorRef> nodesOfKey = nodesOfPartition.get(partition);
-
             //if this node have assigned the partition of that key
             if(nodesOfKey.contains(self())) {
-                Logger.std.dlog("Node" +nodeNumber+" is assigned to P"+partition);
                 //if this is the leader of the partition of that datum, write and propagate
                 if(nodesOfKey.get(0).equals(self())) {
-                    Logger.std.dlog("Node" +nodeNumber+" is leader of P"+partition);
                     insertData(putMsg, partition, false);
                     if(nodesOfKey.size() >= 2) {
                         putMsg.setSender(self());

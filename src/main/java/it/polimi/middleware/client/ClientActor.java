@@ -30,7 +30,7 @@ public class ClientActor extends AbstractActorWithStash {
      * A map where key is the partition and value is the operation id for that partition.
      * Is a progressive number increasing by 1 for each put.
      */
-    private HashMap<Integer, Integer> opIDPerPartition;
+    private final HashMap<Integer, Integer> opIDPerPartition;
 
     private int numOfPartitions;
 

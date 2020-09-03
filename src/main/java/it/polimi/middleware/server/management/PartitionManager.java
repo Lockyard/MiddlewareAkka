@@ -199,6 +199,11 @@ public class PartitionManager {
         //if there are no available nodes, then throw exception
         if(availableNodes.size() == 0) {
             partitionsOfNode.remove(removedNode);
+            for (List<ActorRef> nodesOfAPartition: nodesOfPartition) {
+                nodesOfAPartition.remove(removedNode);
+            }
+            Logger.std.dlog("Node removed from partition manager. New configuration:\n" +
+                    toStringNodesOfPartition()+"\n" +toStringPartitionsOfNode());
             throw new NotEnoughNodesException(nReplicas, nodes.size(), "The node has been removed but not enough nodes are" +
                     " left!");
         } //otherwise if at least one node can take some load, then it's guaranteed that the other nodes can take all its load

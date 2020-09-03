@@ -113,7 +113,6 @@ public class StoreManager extends AbstractActorWithStash {
                 .match(ClusterEvent.MemberUp.class, this::onMemberUp)
                 .match(ClusterEvent.MemberDowned.class, this::onMemberDowned)
                 .match(ClusterEvent.UnreachableMember.class, this::onUnreachableMember)
-                .match(ClusterEvent.ReachableMember.class, this::onReachableMember)
                 .match(UpdateStoreNodeCompletedMsg.class, this::onUpdateStoreNodeCompletedMsg)
                 .match(RequestActivateMsg.class, this::onRequestActivateMsg)
                 .match(StartSystemMsg.class, this::onStartSystemMessage)
@@ -129,7 +128,7 @@ public class StoreManager extends AbstractActorWithStash {
         Logger.std.dlog("Member is up: " + memberUp.member());
         if(memberUp.member().hasRole("storenode")) {
             Logger.std.dlog("Node"+nodeNumber+" will be " +memberUp.member().address());
-            getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(self(), nodeNumber++, true), self());
+            getContext().actorSelection(memberUp.member().address() + "/user/storenode").tell(new GrantAccessToStoreMsg(nodeNumber++, true), self());
         }
         //down the new member if is another storenode newer than this. It never happens
         else if(memberUp.member().hasRole("storemanager") && cluster.selfMember().isOlderThan(memberUp.member())) {
@@ -151,12 +150,6 @@ public class StoreManager extends AbstractActorWithStash {
                         partitionManager.removeNode(node);
                     } catch (NotEnoughNodesException nene) {
                         Logger.std.ilog("Not enough nodes left in the system!");
-                        /*/
-                        ActorRef newNode = spawnLocalNode();
-                        isUpdateOngoing = true;
-                        updatingNodes.add(newNode);
-                        newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
-                        //*/
                     }
 
 
@@ -189,75 +182,34 @@ public class StoreManager extends AbstractActorWithStash {
         Logger.std.ilog("Detected unreachable member: " +um.member().address());
 
         cluster.down(um.member().address());
-        if(true)
-            return;
-
-        Map<Integer, ActorRef> oldLeaders = partitionManager.getPartitionToLeaderMap();
-
-        boolean markedUnreachable = false;
-        if(um.member().hasRole("storenode")) {
-            for (ActorRef node :
-                    storeNodes) {
-                if (node.path().address().equals(um.member().address())) {
-                    Logger.std.dlog("Found the unreachable member in the storeNodes");
-
-                    partitionManager.markUnreachable(node);
-                    updatingNodes.remove(node);
-                    markedUnreachable = true;
-
-                    //if too few reachable partition replicas remain, remove unreachable nodes until there are enough reachable
-                    //replicas again
-                    if(partitionManager.getMinReachableReplicasAmount() <= minimumReachableDataReplicas) {
-                        partitionManager.removeUnreachableNodeUntilSafeNumberOfReplicas(minimumReachableDataReplicas);
-                        int missingNodes = partitionManager.getMissingNodesForMinimumReplicas();
-                        for (int i = 0; i < missingNodes; i++) {
-                            ActorRef newNode = spawnLocalNode();
-                            newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber-1, false), self());
-                            newNode.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
-                        }
-                    }
-
-                }
-            }
-        }
-
-        //if some node were marked as unreachable something changed, tell to all other nodes
-        if(markedUnreachable)
-            updateAllNodes(oldLeaders);
     }
 
 
-
-    private void onReachableMember(ClusterEvent.ReachableMember rm) {
-        if(rm.member().hasRole("storenode")) {
-            for (ActorRef node :
-                    storeNodes) {
-                if(node.path().address().equals(rm.member().address())) {
-                    partitionManager.markReachable(node);
-                }
-            }
-        }
-    }
 
 
     private void onRequestActivateMsg(RequestActivateMsg msg) {
-        Logger.std.dlog("Request activate received from " + msg.getStoreNodeRef().path());
+        Logger.std.dlog("Request activate received from " + sender().path());
+        Logger.std.dlog("SM doing a consistency check on its reference: " +
+                "\nSelf: " + self() +
+                "\nRefPassed:" + msg.getCheckSMRef() +
+                "\nCompareTo:" + self().compareTo(msg.getCheckSMRef()) +
+                "\nEquals:" +self().equals(msg.getCheckSMRef()));
         //if an update is ongoing and someone wants to join, wait for update completion first.
         // stash the message
         if(isUpdateOngoing) {
             Logger.std.dlog("Update " +updateID +" is ongoing. Request activation was stashed");
-            nodesInJoinQueue.add(msg.getStoreNodeRef());
+            nodesInJoinQueue.add(sender());
             stash();
             return;
         }
         //remove if present the node to the join queue
-        nodesInJoinQueue.remove(msg.getStoreNodeRef());
+        nodesInJoinQueue.remove(sender());
 
         Map<Integer, ActorRef> oldLeaders = partitionManager.getPartitionToLeaderMap();
 
         //add the node logically to the system
-        partitionManager.addNode(msg.getStoreNodeRef());
-        storeNodes.add(msg.getStoreNodeRef());
+        partitionManager.addNode(sender());
+        storeNodes.add(sender());
 
         //if system is running, adding it to the partition manager means updating every node possibly.
         //Notify every node of the new assignments and activate the one making this request
@@ -267,7 +219,7 @@ public class StoreManager extends AbstractActorWithStash {
             updatingNodes.addAll(storeNodes);
             for (ActorRef node :
                     storeNodes) {
-                if (node.equals(msg.getStoreNodeRef()))
+                if (node.equals(sender()))
                     node.tell(new ActivateNodeMsg(partitionManager.getNodesOfPartitionList(), true, updateID), self());
                 else {
                     Logger.std.log(Logger.LogLevel.VERBOSE, "Sending update status to " + node);
@@ -450,7 +402,7 @@ public class StoreManager extends AbstractActorWithStash {
         ActorRef newNode = as.actorOf(StoreNode.props(), "Node"+ (nodeNumber) + "L");
         storeNodes.add(newNode);
         partitionManager.addNode(newNode);
-        newNode.tell(new GrantAccessToStoreMsg(self(), nodeNumber++, false), self());
+        newNode.tell(new GrantAccessToStoreMsg(nodeNumber++, false), self());
         return newNode;
     }
 
