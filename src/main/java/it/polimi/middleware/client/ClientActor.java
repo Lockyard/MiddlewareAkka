@@ -30,7 +30,7 @@ public class ClientActor extends AbstractActorWithStash {
      * A map where key is the partition and value is the operation id for that partition.
      * Is a progressive number increasing by 1 for each put.
      */
-    private final HashMap<Integer, Integer> opIDPerPartition;
+    private final HashMap<String, Integer> opIDMap;
 
     private int numOfPartitions;
 
@@ -38,7 +38,7 @@ public class ClientActor extends AbstractActorWithStash {
     public ClientActor(String serverAddress) {
         this.serverAddress = serverAddress;
         accessNodes = new ArrayList<>();
-        opIDPerPartition = new HashMap<>();
+        opIDMap = new HashMap<>();
     }
 
     @Override
@@ -109,11 +109,6 @@ public class ClientActor extends AbstractActorWithStash {
             clientID = msg.getClientID();
             accessNodes.add(sender());
             getContext().watch(sender());
-
-            numOfPartitions = msg.getNumOfPartitions();
-            for (int i = 0; i < numOfPartitions; i++) {
-                opIDPerPartition.put(i, 0);
-            }
             ClientApp.receiveGreetingReplyUpdate(isConnected, "Received store node address (" + sender().path().address()+")" +
                     " , " + accessNodes.size() + "/" + msg.getTotalAssignedActors());
         } else {
@@ -142,15 +137,14 @@ public class ClientActor extends AbstractActorWithStash {
         }
     }
 
-
     private int getOpIdForKey(String key) {
-        return opIDPerPartition.get(key.hashCode() % numOfPartitions);
+        return opIDMap.getOrDefault(key,0);
     }
 
+
     private int incrementAndGetOpIdForKey(String key) {
-        int k = key.hashCode() % numOfPartitions;
-        opIDPerPartition.put(k, opIDPerPartition.get(k) + 1);
-        return opIDPerPartition.get(k);
+        opIDMap.put(key, opIDMap.getOrDefault(key,0) + 1);
+        return opIDMap.get(key);
     }
 
 

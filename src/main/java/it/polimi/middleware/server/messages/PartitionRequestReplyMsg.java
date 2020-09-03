@@ -15,12 +15,12 @@ public class PartitionRequestReplyMsg extends ServerMessage {
 
     private final HashMap<String, ValueData> partitionData;
 
-    private final Map<Long, Long> clientToOpIDMap;
+    private final Map<Long, Map<String, Long>> clientToOpIDMap;
 
     private final long updateID;
 
     public PartitionRequestReplyMsg(int partitionRequired, HashMap<String, ValueData> partitionData,
-                                    Map<Long, Long> clientToOpIDMap, long updateID) {
+                                    Map<Long, Map<String, Long>> clientToOpIDMap, long updateID) {
         this.partitionRequired = partitionRequired;
         this.partitionData = partitionData;
         this.clientToOpIDMap = clientToOpIDMap;
@@ -35,7 +35,7 @@ public class PartitionRequestReplyMsg extends ServerMessage {
         return partitionData;
     }
 
-    public Map<Long, Long> getClientToOpIDMap() {
+    public Map<Long, Map<String, Long>> getClientToOpIDMap() {
         return clientToOpIDMap;
     }
 

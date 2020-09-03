@@ -69,7 +69,7 @@ public class StoreNode extends AbstractActorWithStash {
      * whose key are integer representing a partition, and for each partition as value there is the
      * logical ID of the last operation done by that client on that partition.
      */
-    private Map<Long, Map<Integer, Long>> clientOpIDMap;
+    private Map<Long, Map<String, Long>> clientOpIDMap;
 
     /**
      * The set of the partitions assigned to this node
@@ -539,10 +539,10 @@ public class StoreNode extends AbstractActorWithStash {
                 Logger.std.dlog("Node"+nodeNumber+" adding data for partition " + msg.getPartitionRequired());
                 dataPerPartition.put(msg.getPartitionRequired(), msg.getPartitionData());
 
-                msg.getClientToOpIDMap().forEach((clientID, opID) -> {
+                msg.getClientToOpIDMap().forEach((clientID, keyToOpIDMap) -> {
                     if(!clientOpIDMap.containsKey(clientID))
                         clientOpIDMap.put(clientID, new HashMap<>());
-                    clientOpIDMap.get(clientID).put(msg.getPartitionRequired(), opID);
+                    clientOpIDMap.get(clientID).putAll(keyToOpIDMap);
                 });
             }
 
@@ -819,19 +819,19 @@ public class StoreNode extends AbstractActorWithStash {
         //setup if something is empty for a specific client
         if(!clientOpIDMap.containsKey(msg.getClientID()))
             clientOpIDMap.put(msg.getClientID(), new HashMap<>());
-        if(!clientOpIDMap.get(msg.getClientID()).containsKey(partition) ||
-            clientOpIDMap.get(msg.getClientID()).get(partition) == null)
-            clientOpIDMap.get(msg.getClientID()).put(partition, 0L);
+        if(!clientOpIDMap.get(msg.getClientID()).containsKey(msg.getKey()) ||
+            clientOpIDMap.get(msg.getClientID()).get(msg.getKey()) == null)
+            clientOpIDMap.get(msg.getClientID()).put(msg.getKey(), 0L);
 
 
         //if op id is consistent with what's saved, then get it
-        if(clientOpIDMap.get(msg.getClientID()).get(partition) == msg.getClientOpID()) {
+        if(clientOpIDMap.get(msg.getClientID()).get(msg.getKey()) == msg.getClientOpID()) {
             String result = dataPerPartition.get(partition).containsKey(msg.getKey()) ?
                     dataPerPartition.get(partition).get(msg.getKey()).getValue() : null;
             return new ReplyGetMsg(msg.getKey(), result, msg.getClientOpID());
         }
         //if op id is precedent what's is in mem, ask to the history, if present
-        else if (clientOpIDMap.get(msg.getClientID()).get(partition) < msg.getClientOpID()) {
+        else if (clientOpIDMap.get(msg.getClientID()).get(msg.getKey()) < msg.getClientOpID()) {
             return historyKeeper.getDatumFromHistory(msg);
         }
         //if op id is of future, then ask to the leader
@@ -857,52 +857,92 @@ public class StoreNode extends AbstractActorWithStash {
         //setup if something is empty for a specific client
         if(!clientOpIDMap.containsKey(putMsg.getClientID()))
             clientOpIDMap.put(putMsg.getClientID(), new HashMap<>());
-        if(!clientOpIDMap.get(putMsg.getClientID()).containsKey(partition))
-            clientOpIDMap.get(putMsg.getClientID()).put(partition, 0L);
+        if(!clientOpIDMap.get(putMsg.getClientID()).containsKey(putMsg.getKey()))
+            clientOpIDMap.get(putMsg.getClientID()).put(putMsg.getKey(), 0L);
 
 
         if(isFromLeader) {
-            dataPerPartition.get(partition).put(putMsg.getKey(), new ValueData(putMsg.getVal(), putMsg.getNewness()));
-            incrementPartitionUpdateValue(partition);
+            //if newness is greater, then update
+            if(putMsg.getNewness() > dataPerPartition.get(partition).get(putMsg.getKey()).getNewness()) {
 
-            if(putMsg.getClientOpID() > clientOpIDMap.get(putMsg.getClientID()).get(partition)) {
-                //update the new opid
-                clientOpIDMap.get(putMsg.getClientID()).put(partition, putMsg.getClientOpID());
+                //before writing new value, put in history the old one
+                historyKeeper.insertPutMessage(putMsgForHistoryFromData(
+                        putMsg.getKey(), partition, putMsg.getClientID(),
+                        clientOpIDMap.get(putMsg.getClientID()).get(putMsg.getKey())));
+
+                long increasedUpdateValue = putMsg.getNewness() - dataPerPartition.get(partition).get(putMsg.getKey()).getNewness();
+                dataPerPartition.get(partition).put(putMsg.getKey(), new ValueData(putMsg.getVal(), putMsg.getNewness()));
+                incrementPartitionUpdateValue(partition, increasedUpdateValue);
+
+                if(putMsg.getClientOpID() > clientOpIDMap.get(putMsg.getClientID()).get(putMsg.getKey())) {
+                    //update the new opid
+                    clientOpIDMap.get(putMsg.getClientID()).put(putMsg.getKey(), putMsg.getClientOpID());
+                }
+
             }
-            //if is older, put it in history
-            else {
+            //if message from leader is older, then put in history
+            else  {
                 historyKeeper.insertPutMessage(putMsg);
             }
 
         }
         //else this is the leader
         else {
-            //if message is newer, write it
-            if(putMsg.getClientOpID() > clientOpIDMap.get(putMsg.getClientID()).get(partition)) {
+            //if message is newer, write it, and move the old message in the history
+            if(putMsg.getClientOpID() > clientOpIDMap.get(putMsg.getClientID()).get(putMsg.getKey())) {
+                //before writing new value, put in history the old one
+                historyKeeper.insertPutMessage(putMsgForHistoryFromData(
+                        putMsg.getKey(), partition, putMsg.getClientID(),
+                        clientOpIDMap.get(putMsg.getClientID()).get(putMsg.getKey())));
                 //update the new opid
-                clientOpIDMap.get(putMsg.getClientID()).put(partition, putMsg.getClientOpID());
-
+                clientOpIDMap.get(putMsg.getClientID()).put(putMsg.getKey(), putMsg.getClientOpID());
+                //write new data
                 long newness = dataPerPartition.get(partition).get(putMsg.getKey()).updateOnce(putMsg.getVal());
-                incrementPartitionUpdateValue(partition);
+                incrementPartitionUpdateValue(partition, 1);
                 putMsg.setNewness(newness);
+            }
+            //if message is older, insert it in the history
+            else {
+                putMsg.setNewness(0);
+                historyKeeper.insertPutMessage(putMsg);
             }
         }
     }
 
-
-    private void incrementPartitionUpdateValue(int partition) {
-        //increment by 1 the update value of that partition
-        updateValuePerPartition.put(partition, updateValuePerPartition.getOrDefault(partition, 0L) +1);
+    private PutMsg putMsgForHistoryFromData(String key, int partition, long clientID, long clientOpID) {
+        ValueData vd = dataPerPartition.get(partition).get(key);
+        PutMsg resPutMsg = new PutMsg(key, vd.getValue());
+        resPutMsg.setClientID(clientID);
+        resPutMsg.setClientOpID(clientOpID);
+        return resPutMsg;
     }
 
 
-    private Map<Long, Long> getClientOpIDMapForSinglePartition(int partition) {
-        Map<Long, Long> res = new HashMap<>();
+    private void incrementPartitionUpdateValue(int partition, long increment) {
+        //increment by 1 the update value of that partition
+        updateValuePerPartition.put(partition, updateValuePerPartition.getOrDefault(partition, 0L) + increment);
+    }
+
+
+    /**
+     * Get a subset of the clientOpIDMap, where only entries of partitions specified are in
+     * @param partition
+     * @return
+     */
+    private Map<Long, Map<String, Long>> getClientOpIDMapForSinglePartition(int partition) {
+        Map<Long, Map<String, Long>> res = new HashMap<>();
         clientOpIDMap.forEach((clientID, partToIDMap) -> {
-            res.put(clientID, partToIDMap.get(partition));
+            Map<String, Long> clientPartMap = new HashMap<>();
+            partToIDMap.forEach((key, opID) -> {
+                if(partitionOf(key) == partition) {
+                    clientPartMap.put(key, opID);
+                }
+            });
+            res.put(clientID, clientPartMap);
         });
         return res;
     }
+
 
 
 
