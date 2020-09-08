@@ -15,7 +15,7 @@ import java.util.List;
 public class ClientActor extends AbstractActorWithStash {
 
     private ActorSelection server;
-    private String serverAddress;
+    private final String serverAddress;
     private long clientID = 0;
     private boolean isConnected = false;
     /**

@@ -18,7 +18,6 @@ public class CommandParser {
     public static List<ServiceMessage> parseLine(String line) {
 
         if(line.startsWith("h")) {
-            //TODO-i getrange and putrange
             System.out.println("COMMANDS:\n" +
                     "put k v\t-> put in key k the value v\n" +
                     "get k\t-> get the value in key k\n" +

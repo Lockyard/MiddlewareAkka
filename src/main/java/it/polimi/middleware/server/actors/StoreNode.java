@@ -619,6 +619,8 @@ public class StoreNode extends AbstractActorWithStash {
                 //if datum was not found here, ask to the leader. Even if this is the leader, the message could be late, so forward to
                 //itself anyway. The message will die eventually or be answered
                 else {
+                    stash();
+                    /*/
                     Logger.std.dlog(">Node" +nodeNumber+" didn't find a datum, forwarding get to " +
                             nodesOfPartition.get(partition).get(0));
                     //set self as sender
@@ -626,6 +628,7 @@ public class StoreNode extends AbstractActorWithStash {
                     //ask and pipe the answer
                     CompletableFuture<Object> future = ask(nodesOfPartition.get(partition).get(0), getMsg, timeout).toCompletableFuture();
                     pipe(future, getContext().dispatcher()).to(sender());
+                    //*/
                 }
             } else {
                 // if datum is not assigned to this replica, ask to another replica to which has it assigned
@@ -735,6 +738,7 @@ public class StoreNode extends AbstractActorWithStash {
             sender().tell(new ReplyErrorMsg("The client requesting the operation has not authorization" +
                     " on this node"), self());
         }
+        unstashAll();
         
     }
 
@@ -979,10 +983,6 @@ public class StoreNode extends AbstractActorWithStash {
         } else {
             return "Node"+nodeNumber;
         }
-    }
-
-    private void checkHistoryForMessage(String key, long newness) {
-        //TODO implement a history which stores the last N put operations, to recover old values no more in data
     }
 
     /**
